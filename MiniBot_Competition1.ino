@@ -499,7 +499,7 @@ void loop() {
     } else if (myController->r2() || myController->l2()) {
       servoAngle = 70;
     } else {
-      servoAngle = 127;
+      servoAngle = 124;
     }
     MotorOutput[7].write(constrain(servoAngle + TRIM_7, 0, 180));
     MotorOutput[8].write(constrain((180 - servoAngle) + TRIM_8, 0, 180));

@@ -3,96 +3,275 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MiniBot Control</title>
 
-<!--
-  This is the control page. Edit it freely - the server just serves this file,
-  so a save and a browser refresh is all it takes to see a change. No need to
-  touch web_ui.py unless you are adding a new button that needs new behaviour
-  on the robot side.
-
-  To add a button: copy one of the <button> lines below. target(n) drives to
-  platform n. post('/api/whatever') hits the server.
--->
-
 <style>
-  :root { color-scheme: dark; }
-  body { margin:0; background:#111; color:#eee; font:15px system-ui, sans-serif; }
-  .wrap { max-width:1100px; margin:0 auto; padding:16px; }
-  h1 { font-size:18px; margin:0 0 12px; letter-spacing:.02em; }
-  #cam { max-width:100%; display:block; border-radius:8px; cursor:crosshair; }
-  .row { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
-  button { background:#222; color:#eee; border:1px solid #444; border-radius:6px;
-           padding:10px 14px; font-size:15px; cursor:pointer; }
-  button:hover { background:#2d2d2d; }
-  .go  { border-color:#2a7; }
-  .bad { border-color:#a33; }
-  .bar { padding:10px 14px; border-radius:6px; background:#1a1a1a; border:1px solid #333; }
-  .on  { color:#4d4; font-weight:600; }
-  .off { color:#f55; font-weight:600; }
-  code { color:#8cf; }
+  :root {
+    color-scheme: dark;
+    --bg: #0b0d10;
+    --panel: #14171c;
+    --panel-2: #1a1e24;
+    --line: #262b33;
+    --text: #e6e9ee;
+    --dim: #8b949e;
+    --green: #3fb950;
+    --red: #f85149;
+    --amber: #d29922;
+    --blue: #388bfd;
+    --orange: #db6d28;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 20px 48px; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; margin-bottom: 16px;
+  }
+  .title { font-size: 15px; font-weight: 600; letter-spacing: .3px; }
+  .title span { color: var(--dim); font-weight: 400; margin-left: 8px; }
+
+  .pills { display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 999px; padding: 6px 13px;
+    font-size: 12px; font-weight: 500; color: var(--dim);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+  .dot.ok   { background: var(--green); box-shadow: 0 0 8px rgba(63,185,80,.6); }
+  .dot.warn { background: var(--amber); }
+  .dot.err  { background: var(--red); }
+
+  .stage {
+    position: relative; background: #000;
+    border: 1px solid var(--line); border-radius: 12px;
+    overflow: hidden; line-height: 0;
+  }
+  #cam {
+    width: 100%; max-height: 56vh; object-fit: contain;
+    display: block; cursor: crosshair; background: #000;
+  }
+
+  .hud {
+    position: absolute; left: 12px; bottom: 12px; right: 12px;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 9px 13px; border-radius: 9px;
+    background: rgba(8,10,13,.82);
+    border: 1px solid rgba(255,255,255,.08);
+    backdrop-filter: blur(8px);
+    font: 12px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    color: var(--dim);
+  }
+  .hud b { color: var(--text); font-weight: 600; }
+  .hud .sep { color: #333a44; }
+
+  .timer {
+    position: absolute; top: 12px; right: 12px;
+    padding: 7px 14px; border-radius: 9px;
+    background: rgba(8,10,13,.82);
+    border: 1px solid rgba(255,255,255,.08);
+    backdrop-filter: blur(8px);
+    font: 600 18px/1 ui-monospace, Consolas, monospace;
+    letter-spacing: .5px;
+  }
+  .timer.run { color: var(--green); }
+  .timer.end { color: var(--red); }
+
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 14px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 11px; padding: 14px;
+  }
+  .card h2 {
+    margin: 0 0 11px; font-size: 11px; font-weight: 600;
+    letter-spacing: .9px; text-transform: uppercase; color: var(--dim);
+  }
+  .stack { display: flex; flex-direction: column; gap: 8px; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  button {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 11px 14px; font-size: 13.5px; font-weight: 500;
+    font-family: inherit; cursor: pointer; text-align: left;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    transition: background .12s, border-color .12s;
+  }
+  button:hover { background: #222831; border-color: #39414d; }
+  button:active { transform: translateY(1px); }
+  button kbd {
+    font: 11px ui-monospace, Consolas, monospace; color: var(--dim);
+    background: #0e1116; border: 1px solid var(--line);
+    border-radius: 4px; padding: 2px 6px;
+  }
+  button.primary { background: rgba(63,185,80,.13); border-color: rgba(63,185,80,.45); color: #7ee28a; }
+  button.primary:hover { background: rgba(63,185,80,.2); }
+  button.danger  { background: rgba(248,81,73,.13); border-color: rgba(248,81,73,.45); color: #ff8b84; }
+  button.danger:hover { background: rgba(248,81,73,.2); }
+  button.blue   { border-left: 3px solid var(--blue); }
+  button.orange { border-left: 3px solid var(--orange); }
+
+  .log {
+    margin-top: 14px; padding: 11px 14px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 9px;
+    font: 12.5px ui-monospace, Consolas, monospace; color: var(--dim);
+    min-height: 38px; display: flex; align-items: center;
+  }
+  .hint { margin: 12px 2px 0; font-size: 12.5px; color: #6e7681; }
 </style>
 
 <div class="wrap">
-  <h1>MiniBot Control</h1>
+  <header>
+    <div class="title">MiniBot Control <span>Sector Siege</span></div>
+    <div class="pills">
+      <div class="pill"><i class="dot" id="d-link"></i><span id="t-link">link</span></div>
+      <div class="pill"><i class="dot" id="d-tag"></i><span id="t-tag">tag</span></div>
+      <div class="pill"><i class="dot" id="d-cal"></i><span id="t-cal">calibration</span></div>
+      <div class="pill"><i class="dot" id="d-en"></i><span id="t-en">disabled</span></div>
+    </div>
+  </header>
 
-  <img id="cam" src="/stream">
-
-  <div class="row">
-    <button class="go"  onclick="post('/api/enable')">ENABLE</button>
-    <button class="bad" onclick="post('/api/disable')">DISABLE</button>
-    <button onclick="post('/api/cancel')">Cancel goal</button>
+  <div class="stage">
+    <img id="cam" src="/stream" alt="field view">
+    <div class="timer" id="timer">90.0</div>
+    <div class="hud">
+      <span>X <b id="px">—</b></span><span class="sep">|</span>
+      <span>Y <b id="py">—</b></span><span class="sep">|</span>
+      <span>HDG <b id="ph">—</b></span><span class="sep">|</span>
+      <span id="pstate">waiting</span>
+    </div>
   </div>
 
-  <div class="row">
-    <button onclick="target(1)">Corner blue A</button>
-    <button onclick="target(2)">Corner blue B</button>
-    <button onclick="target(5)">Centre blue</button>
-    <button onclick="target(6)">Centre orange</button>
-    <button onclick="target(3)">Corner orange A</button>
-    <button onclick="target(4)">Corner orange B</button>
+  <div class="grid">
+    <div class="card">
+      <h2>Match</h2>
+      <div class="stack">
+        <button class="primary" onclick="enable()">Enable<kbd>space</kbd></button>
+        <button class="danger" onclick="disable()">Disable<kbd>D</kbd></button>
+        <button onclick="post('/api/cancel')">Cancel goal<kbd>C</kbd></button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Platforms</h2>
+      <div class="stack">
+        <div class="pair">
+          <button class="blue" onclick="target(1)">Corner A<kbd>1</kbd></button>
+          <button class="blue" onclick="target(2)">Corner B<kbd>2</kbd></button>
+        </div>
+        <button class="blue" onclick="target(5)">Centre blue<kbd>5</kbd></button>
+        <button class="orange" onclick="target(6)">Centre orange<kbd>6</kbd></button>
+        <div class="pair">
+          <button class="orange" onclick="target(3)">Corner A<kbd>3</kbd></button>
+          <button class="orange" onclick="target(4)">Corner B<kbd>4</kbd></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Setup</h2>
+      <div class="stack">
+        <button onclick="post('/api/calib/capture')">Capture point<kbd id="caln">0/4</kbd></button>
+        <button onclick="post('/api/calib/reset')">Reset calibration</button>
+        <button onclick="post('/api/zero')">Zero heading</button>
+      </div>
+    </div>
   </div>
 
-  <div class="row">
-    <button onclick="post('/api/calib/capture')">Capture calibration point</button>
-    <button onclick="post('/api/calib/reset')">Reset calibration</button>
-    <button onclick="post('/api/zero')">Zero heading</button>
-  </div>
-
-  <div class="bar" id="state">...</div>
-
-  <p>Click anywhere on the video to send the robot there. Calibration: stand the
-  robot on each known point, press <code>Capture</code>, four times.</p>
+  <div class="log" id="log">ready</div>
+  <p class="hint">Click anywhere on the field view to drive there. Calibration: stand the robot on each known point and press Capture, four times.</p>
 </div>
 
 <script>
+let enabled = false;
+let startedAt = null;
+
 async function post(url, body) {
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body || {})
-  });
-  const j = await r.json();
-  if (j.message) document.getElementById('state').textContent = j.message;
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body || {})
+    });
+    const j = await r.json();
+    if (j.message) document.getElementById('log').textContent = j.message;
+  } catch (e) {
+    document.getElementById('log').textContent = 'server not responding';
+  }
 }
 
 function target(id) { post('/api/target', {id: id}); }
+function enable()  { enabled = true;  startedAt = Date.now(); post('/api/enable'); }
+function disable() { enabled = false; startedAt = null;       post('/api/disable'); }
 
 document.getElementById('cam').addEventListener('click', (e) => {
   const img = e.target;
-  const rect = img.getBoundingClientRect();
-  // the page may be showing the frame scaled, so convert back to real pixels
-  const x = (e.clientX - rect.left) * (img.naturalWidth  / rect.width);
-  const y = (e.clientY - rect.top)  * (img.naturalHeight / rect.height);
+  const r = img.getBoundingClientRect();
+  const x = (e.clientX - r.left) * (img.naturalWidth  / r.width);
+  const y = (e.clientY - r.top)  * (img.naturalHeight / r.height);
   post('/api/click', {x: x, y: y});
 });
 
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  const k = e.key.toLowerCase();
+  if (e.code === 'Space') { e.preventDefault(); enable(); }
+  else if (k === 'd') disable();
+  else if (k === 'c') post('/api/cancel');
+  else if (k >= '1' && k <= '6') target(parseInt(k, 10));
+});
+
+function setDot(id, cls, label, text) {
+  document.getElementById(id).className = 'dot ' + cls;
+  document.getElementById(label).textContent = text;
+}
+
+function tick() {
+  const el = document.getElementById('timer');
+  if (!startedAt) { el.textContent = '90.0'; el.className = 'timer'; return; }
+  const left = Math.max(0, 90 - (Date.now() - startedAt) / 1000);
+  el.textContent = left.toFixed(1);
+  el.className = 'timer ' + (left <= 15 ? 'end' : 'run');
+  if (left === 0 && enabled) { enabled = false; startedAt = null; }
+}
+setInterval(tick, 100);
+
 setInterval(async () => {
-  const s = await (await fetch('/api/state')).json();
-  const en = s.enabled ? '<span class="on">ENABLED</span>'
-                       : '<span class="off">disabled</span>';
-  const pose = s.pose
-    ? `x ${s.pose[0].toFixed(0)} &nbsp; y ${s.pose[1].toFixed(0)} &nbsp; hdg ${s.pose[2].toFixed(1)}&deg;`
-    : '<span class="off">NO TAG</span>';
-  document.getElementById('state').innerHTML =
-    `${en} &nbsp;|&nbsp; ${pose} &nbsp;|&nbsp; ${s.status}`;
+  let s;
+  try {
+    s = await (await fetch('/api/state')).json();
+  } catch (e) {
+    setDot('d-link', 'err', 't-link', 'server down');
+    return;
+  }
+
+  setDot('d-link', 'ok', 't-link', 'server up');
+
+  if (s.pose) {
+    setDot('d-tag', 'ok', 't-tag', 'tag locked');
+    document.getElementById('px').textContent = s.pose[0].toFixed(0);
+    document.getElementById('py').textContent = s.pose[1].toFixed(0);
+    document.getElementById('ph').textContent = s.pose[2].toFixed(1) + '°';
+  } else {
+    setDot('d-tag', 'err', 't-tag', 'no tag');
+    document.getElementById('px').textContent = '—';
+    document.getElementById('py').textContent = '—';
+    document.getElementById('ph').textContent = '—';
+  }
+
+  if (s.calibrated) setDot('d-cal', 'ok', 't-cal', 'calibrated');
+  else setDot('d-cal', 'warn', 't-cal', 'calibrate ' + s.calib_points + '/4');
+  document.getElementById('caln').textContent = s.calib_points + '/4';
+
+  enabled = s.enabled;
+  if (!s.enabled) startedAt = null;
+  setDot('d-en', s.enabled ? 'ok' : 'err', 't-en', s.enabled ? 'ENABLED' : 'disabled');
+  document.getElementById('pstate').textContent = s.status;
 }, 300);
 </script>

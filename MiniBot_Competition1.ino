@@ -23,7 +23,7 @@ unsigned long flashStart = 0;
 const int flashInterval = 50;
 const int flashDurationCycles = 10; // 4 full on and off and it flashes
 
-enum FlashColor { FLASH_NONE, FLASH_GREEN, FLASH_RED };
+enum FlashColor { FLASH_NONE, FLASH_GREEN, FLASH_RED, FLASH_WHITE };
 FlashColor currentFlashColor = FLASH_NONE;
 
 bool lastR2State = false;
@@ -344,7 +344,7 @@ void DpadPlasma() {
   }
 }
 
-void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool trianglePressed, bool reversing, bool dpadUp, bool dpadDown, bool dpadLeft, bool dpadRight) {
+void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool trianglePressed, bool dpadUp, bool dpadDown, bool dpadLeft, bool dpadRight) {
 
 
   if ((r2Pressed || r1Pressed) && victoryActive) {
@@ -387,7 +387,7 @@ void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool trianglePressed, b
   if (r2Pressed && !lastR2State) {
     flashing = true;
     flashStart = millis();
-    currentFlashColor = FLASH_GREEN;
+    currentFlashColor = FLASH_WHITE;
   }
   if (r1Pressed && !lastR1State) {
     flashing = true;
@@ -409,18 +409,13 @@ void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool trianglePressed, b
     return;
   }
 
-  if (reversing) {
-    bool on = (millis() / flashInterval) % 2 == 0;
-    fill_solid(leds2, NUM_LEDS2, on ? CRGB::White : CRGB::Black);
-    fill_solid(leds, LED_COUNT, on ? CRGB::White : CRGB::Black);
-    return;
-  }
-
   if (flashing) {
     unsigned long elapsed = millis() - flashStart;
     if (elapsed < flashInterval * flashDurationCycles) {
       bool on = (elapsed / flashInterval) % 2 == 0;
-      CRGB color = (currentFlashColor == FLASH_RED) ? CRGB::Red : CRGB::Green;
+      CRGB color = CRGB::Green;
+      if (currentFlashColor == FLASH_RED) color = CRGB::Red;
+      else if (currentFlashColor == FLASH_WHITE) color = CRGB::White;
       fill_solid(leds2, NUM_LEDS2, on ? color : CRGB::Black);
       fill_solid(leds, LED_COUNT, on ? color : CRGB::Black);
     } else {
@@ -571,9 +566,7 @@ if (rightReversing) {
 
     GamePad_BatteryMonitor();
 
-    bool reversing = turnValue < -50;
-
-UpdateExternalStrip(myController->r2(), myController->r1(), myController->y(), reversing,
+UpdateExternalStrip(myController->r2(), myController->r1(), myController->y(),
                          myController->dpad() & DPAD_UP,
                          myController->dpad() & DPAD_DOWN,
                          myController->dpad() & DPAD_LEFT,

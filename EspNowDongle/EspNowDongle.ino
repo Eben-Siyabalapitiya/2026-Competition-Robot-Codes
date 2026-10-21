@@ -1,11 +1,9 @@
-
 #include <WiFi.h>
 #include <esp_now.h>
 
-uint8_t ROBOT_MAC[6] = { 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
+const char *ROBOT_MAC_STR = "AA:BB:CC:DD:EE:FF";
 
-#define LINK_MAGIC   0x5A
-#define LINK_VERSION 1
+#define STATUS_LED 2
 
 #pragma pack(push, 1)
 struct LinkPacket {
@@ -24,23 +22,61 @@ struct LinkPacket {
 };
 #pragma pack(pop)
 
+uint8_t robotMac[6];
 uint8_t buf[sizeof(LinkPacket)];
 int     fill = 0;
 int     rxState = 0;
+bool    peerReady = false;
+
+uint32_t sent = 0;
+uint32_t failed = 0;
+unsigned long lastPacket = 0;
+unsigned long lastReport = 0;
+
+bool ParseMac(const char *s, uint8_t *out) {
+  int v[6];
+  if (sscanf(s, "%x:%x:%x:%x:%x:%x", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6) return false;
+  for (int i = 0; i < 6; i++) out[i] = (uint8_t)v[i];
+  return true;
+}
+
+void OnSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
+  if (status == ESP_NOW_SEND_SUCCESS) sent++;
+  else failed++;
+}
 
 void setup() {
   Serial.begin(921600);
+  pinMode(STATUS_LED, OUTPUT);
+  digitalWrite(STATUS_LED, LOW);
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
+
+  Serial.println();
+  Serial.print("# dongle MAC  ");
+  Serial.println(WiFi.macAddress());
+
+  if (!ParseMac(ROBOT_MAC_STR, robotMac)) {
+    Serial.println("# ROBOT_MAC_STR is not a valid MAC address");
+    return;
+  }
+
+  if (robotMac[0] == 0xAA && robotMac[1] == 0xBB && robotMac[2] == 0xCC) {
+    Serial.println("# ROBOT_MAC_STR is still the placeholder.");
+    Serial.println("# Power the robot, read the MAC it prints at 115200,");
+    Serial.println("# paste it into ROBOT_MAC_STR, reflash this board.");
+    return;
+  }
 
   if (esp_now_init() != ESP_OK) {
     Serial.println("# esp_now_init failed");
     return;
   }
+  esp_now_register_send_cb(OnSent);
 
   esp_now_peer_info_t peer = {};
-  memcpy(peer.peer_addr, ROBOT_MAC, 6);
+  memcpy(peer.peer_addr, robotMac, 6);
   peer.channel = 0;
   peer.encrypt = false;
 
@@ -49,11 +85,18 @@ void setup() {
     return;
   }
 
-  Serial.print("# dongle ready, my MAC ");
-  Serial.println(WiFi.macAddress());
+  peerReady = true;
+  Serial.print("# forwarding to ");
+  Serial.println(ROBOT_MAC_STR);
+  Serial.println("# ready");
 }
 
 void loop() {
+  if (!peerReady) {
+    digitalWrite(STATUS_LED, (millis() / 150) % 2);
+    return;
+  }
+
   while (Serial.available()) {
     uint8_t b = Serial.read();
 
@@ -65,10 +108,18 @@ void loop() {
     } else {
       buf[fill++] = b;
       if (fill == sizeof(LinkPacket)) {
-        esp_now_send(ROBOT_MAC, buf, sizeof(buf));
+        esp_now_send(robotMac, buf, sizeof(buf));
         rxState = 0;
         fill = 0;
+        lastPacket = millis();
       }
     }
+  }
+
+  digitalWrite(STATUS_LED, (millis() - lastPacket) < 400 ? HIGH : LOW);
+
+  if (millis() - lastReport > 2000) {
+    lastReport = millis();
+    Serial.printf("# sent %lu  failed %lu\n", sent, failed);
   }
 }

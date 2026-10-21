@@ -157,6 +157,7 @@ LinkPacket    rxPacket;
 uint16_t      lastSeq = 0;
 unsigned long lastPacketMs = 0;
 unsigned long lastPoseMs   = 0;
+unsigned long lastMacPrint = 0;
 
 uint8_t LinkChecksum(const uint8_t *buf, size_t len) {
   uint8_t c = 0;
@@ -493,6 +494,11 @@ void loop() {
   switch (state) {
     case ST_DISABLED:
       StopAll();
+      if (lastPacketMs == 0 && now - lastMacPrint > 3000) {
+        lastMacPrint = now;
+        Serial.print("robot MAC for ROBOT_MAC_STR in the dongle sketch: ");
+        Serial.println(WiFi.macAddress());
+      }
       break;
 
     case ST_IDLE:

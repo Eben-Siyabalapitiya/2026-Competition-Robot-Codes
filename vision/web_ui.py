@@ -41,6 +41,17 @@ from minibot_vision import (
 
 app = Flask(__name__)
 
+TARGET_POINTS = {
+    1: ((305, 305), "corner blue A"),
+    2: ((305, 914), "corner blue B"),
+    3: ((1524, 305), "corner orange A"),
+    4: ((1524, 914), "corner orange B"),
+    5: ((610, 610), "centre blue"),
+    6: ((1219, 610), "centre orange"),
+}
+
+GOAL_REACHED_MM = 60.0
+
 class Controller:
     def __init__(self, camera, port, tag_id, family, width, height):
         self.cap = cv2.VideoCapture(camera, cv2.CAP_DSHOW)
@@ -60,6 +71,8 @@ class Controller:
         self.calib_shots = []
 
         self.pending = None
+        self.goal = None
+        self.goal_label = ""
         self.running = True
 
         threading.Thread(target=self.worker, daemon=True).start()
@@ -90,6 +103,7 @@ class Controller:
 
             if self.fmap.ready:
                 self.draw_field(frame)
+                self.draw_goal(frame, pose)
 
             with self.lock:
                 self.pose = pose
@@ -113,6 +127,49 @@ class Controller:
             cv2.circle(frame, self.fmap.to_image(cxy), 8, (255, 120, 0), 2)
         for t in CALIB_POINTS:
             cv2.circle(frame, self.fmap.to_image(t), 5, (0, 255, 0), 1)
+
+    def draw_goal(self, frame, pose):
+        with self.lock:
+            goal = self.goal
+            label = self.goal_label
+        if goal is None:
+            return
+
+        reached = False
+        if pose:
+            dx = goal[0] - pose[0]
+            dy = goal[1] - pose[1]
+            reached = (dx * dx + dy * dy) ** 0.5 < GOAL_REACHED_MM
+
+        colour = (80, 230, 80) if reached else (40, 190, 255)
+        gx, gy = self.fmap.to_image(goal)
+
+        if pose:
+            rx, ry = self.fmap.to_image((pose[0], pose[1]))
+            cv2.line(frame, (rx, ry), (gx, gy), colour, 1, cv2.LINE_AA)
+
+        cv2.circle(frame, (gx, gy), 16, colour, 2, cv2.LINE_AA)
+        cv2.circle(frame, (gx, gy), 4, colour, -1, cv2.LINE_AA)
+        cv2.line(frame, (gx - 24, gy), (gx - 20, gy), colour, 2)
+        cv2.line(frame, (gx + 20, gy), (gx + 24, gy), colour, 2)
+        cv2.line(frame, (gx, gy - 24), (gx, gy - 20), colour, 2)
+        cv2.line(frame, (gx, gy + 20), (gx, gy + 24), colour, 2)
+
+        text = label + (" - reached" if reached else "")
+        cv2.putText(frame, text, (gx + 22, gy - 14),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.putText(frame, text, (gx + 22, gy - 14),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1, cv2.LINE_AA)
+
+    def set_goal(self, xy, label):
+        with self.lock:
+            self.goal = xy
+            self.goal_label = label
+
+    def clear_goal(self):
+        with self.lock:
+            self.goal = None
+            self.goal_label = ""
 
     def queue(self, cmd, gx=0, gy=0, target=0):
         with self.lock:
@@ -180,8 +237,13 @@ def stream():
 def state():
     with ctl.lock:
         pose = ctl.pose
+    with ctl.lock:
+        goal = ctl.goal
+        goal_label = ctl.goal_label
     return jsonify({
         "pose": list(pose) if pose else None,
+        "goal": list(goal) if goal else None,
+        "goal_label": goal_label,
         "enabled": ctl.enabled,
         "status": ctl.status,
         "calibrated": ctl.fmap.ready,
@@ -199,12 +261,14 @@ def enable():
 def disable():
     ctl.enabled = False
     ctl.status = "DISABLE sent"
+    ctl.clear_goal()
     ctl.queue(CMD_DISABLE)
     return jsonify({"message": "disabled"})
 
 @app.route("/api/cancel", methods=["POST"])
 def cancel():
     ctl.status = "goal cancelled"
+    ctl.clear_goal()
     ctl.queue(CMD_CANCEL)
     return jsonify({"message": "cancelled"})
 
@@ -213,9 +277,13 @@ def target():
     tid = int(request.json.get("id", 0))
     if not ctl.fmap.ready:
         return jsonify({"message": "calibrate first"})
-    ctl.status = f"driving to target {tid}"
+    if tid not in TARGET_POINTS:
+        return jsonify({"message": f"unknown target {tid}"})
+    xy, name = TARGET_POINTS[tid]
+    ctl.set_goal(xy, name)
+    ctl.status = f"driving to {name}"
     ctl.queue(CMD_GOTO_TGT, target=tid)
-    return jsonify({"message": f"target {tid}"})
+    return jsonify({"message": f"selected {name}"})
 
 @app.route("/api/click", methods=["POST"])
 def click():
@@ -226,6 +294,7 @@ def click():
     fx, fy = ctl.fmap.to_field((x, y))
     if not (0 <= fx <= FIELD_X_MM and 0 <= fy <= FIELD_Y_MM):
         return jsonify({"message": "that point is off the field"})
+    ctl.set_goal((fx, fy), f"{fx:.0f},{fy:.0f}")
     ctl.status = f"driving to {fx:.0f},{fy:.0f}"
     ctl.queue(CMD_GOTO_XY, gx=fx, gy=fy)
     return jsonify({"message": f"going to {fx:.0f},{fy:.0f}"})

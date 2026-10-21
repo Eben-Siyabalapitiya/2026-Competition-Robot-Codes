@@ -1,0 +1,98 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MiniBot Control</title>
+
+<!--
+  This is the control page. Edit it freely - the server just serves this file,
+  so a save and a browser refresh is all it takes to see a change. No need to
+  touch web_ui.py unless you are adding a new button that needs new behaviour
+  on the robot side.
+
+  To add a button: copy one of the <button> lines below. target(n) drives to
+  platform n. post('/api/whatever') hits the server.
+-->
+
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#111; color:#eee; font:15px system-ui, sans-serif; }
+  .wrap { max-width:1100px; margin:0 auto; padding:16px; }
+  h1 { font-size:18px; margin:0 0 12px; letter-spacing:.02em; }
+  #cam { max-width:100%; display:block; border-radius:8px; cursor:crosshair; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+  button { background:#222; color:#eee; border:1px solid #444; border-radius:6px;
+           padding:10px 14px; font-size:15px; cursor:pointer; }
+  button:hover { background:#2d2d2d; }
+  .go  { border-color:#2a7; }
+  .bad { border-color:#a33; }
+  .bar { padding:10px 14px; border-radius:6px; background:#1a1a1a; border:1px solid #333; }
+  .on  { color:#4d4; font-weight:600; }
+  .off { color:#f55; font-weight:600; }
+  code { color:#8cf; }
+</style>
+
+<div class="wrap">
+  <h1>MiniBot Control</h1>
+
+  <img id="cam" src="/stream">
+
+  <div class="row">
+    <button class="go"  onclick="post('/api/enable')">ENABLE</button>
+    <button class="bad" onclick="post('/api/disable')">DISABLE</button>
+    <button onclick="post('/api/cancel')">Cancel goal</button>
+  </div>
+
+  <div class="row">
+    <button onclick="target(1)">Corner blue A</button>
+    <button onclick="target(2)">Corner blue B</button>
+    <button onclick="target(5)">Centre blue</button>
+    <button onclick="target(6)">Centre orange</button>
+    <button onclick="target(3)">Corner orange A</button>
+    <button onclick="target(4)">Corner orange B</button>
+  </div>
+
+  <div class="row">
+    <button onclick="post('/api/calib/capture')">Capture calibration point</button>
+    <button onclick="post('/api/calib/reset')">Reset calibration</button>
+    <button onclick="post('/api/zero')">Zero heading</button>
+  </div>
+
+  <div class="bar" id="state">...</div>
+
+  <p>Click anywhere on the video to send the robot there. Calibration: stand the
+  robot on each known point, press <code>Capture</code>, four times.</p>
+</div>
+
+<script>
+async function post(url, body) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body || {})
+  });
+  const j = await r.json();
+  if (j.message) document.getElementById('state').textContent = j.message;
+}
+
+function target(id) { post('/api/target', {id: id}); }
+
+document.getElementById('cam').addEventListener('click', (e) => {
+  const img = e.target;
+  const rect = img.getBoundingClientRect();
+  // the page may be showing the frame scaled, so convert back to real pixels
+  const x = (e.clientX - rect.left) * (img.naturalWidth  / rect.width);
+  const y = (e.clientY - rect.top)  * (img.naturalHeight / rect.height);
+  post('/api/click', {x: x, y: y});
+});
+
+setInterval(async () => {
+  const s = await (await fetch('/api/state')).json();
+  const en = s.enabled ? '<span class="on">ENABLED</span>'
+                       : '<span class="off">disabled</span>';
+  const pose = s.pose
+    ? `x ${s.pose[0].toFixed(0)} &nbsp; y ${s.pose[1].toFixed(0)} &nbsp; hdg ${s.pose[2].toFixed(1)}&deg;`
+    : '<span class="off">NO TAG</span>';
+  document.getElementById('state').innerHTML =
+    `${en} &nbsp;|&nbsp; ${pose} &nbsp;|&nbsp; ${s.status}`;
+}, 300);
+</script>

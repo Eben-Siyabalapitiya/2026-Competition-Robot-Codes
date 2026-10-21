@@ -37,7 +37,6 @@ import numpy as np
 import serial
 from pupil_apriltags import Detector
 
-# ------------------------------------------------------------------ constants
 FIELD_X_MM = 1829
 FIELD_Y_MM = 1219
 
@@ -51,11 +50,9 @@ CMD_CANCEL = 3
 CMD_ENABLE = 4
 CMD_DISABLE = 5
 
-# struct LinkPacket, little endian, packed. Must match auto_types.h exactly.
 PACKET_FMT = "<BBHhhhBBhhBB"
 assert struct.calcsize(PACKET_FMT) == 18
 
-# Platform targets, keys 1..6. Ids match TargetId in auto_types.h.
 TARGETS = {
     ord("1"): (1, "corner blue A"),
     ord("2"): (2, "corner blue B"),
@@ -65,8 +62,6 @@ TARGETS = {
     ord("6"): (6, "centre orange"),
 }
 
-# Where to stand the robot during calibration. Four known field points, far
-# apart, which is what makes the homography stable. These are the corner
 # platform centres - VERIFY against the arena CAD.
 CALIB_POINTS = [
     (305, 305),
@@ -75,13 +70,11 @@ CALIB_POINTS = [
     (1524, 305),
 ]
 
-
 def checksum(data: bytes) -> int:
     c = 0
     for b in data:
         c ^= b
     return c
-
 
 class Link:
     """Serial link to the ESP-NOW dongle."""
@@ -91,7 +84,7 @@ class Link:
         self.ser = None
         if port:
             self.ser = serial.Serial(port, baud, timeout=0)
-            time.sleep(2.0)  # let the ESP32 reset
+            time.sleep(2.0)
             print(f"dongle open on {port}")
         else:
             print("no --port given, running vision only (nothing will be sent)")
@@ -123,13 +116,12 @@ class Link:
         if self.ser:
             self.ser.close()
 
-
 class FieldMap:
     """Image <-> field homography, solved from the tag at known field points."""
 
     def __init__(self):
-        self.H = None       # image -> field
-        self.H_inv = None   # field -> image
+        self.H = None
+        self.H_inv = None
         self.heading_offset = 0.0
 
     @property
@@ -156,12 +148,9 @@ class FieldMap:
         q = self.H_inv @ p
         return (int(q[0] / q[2]), int(q[1] / q[2]))
 
-
 def tag_pose(det, fmap):
     """Field pose of a detected tag: (x_mm, y_mm, heading_deg)."""
     cx, cy = det.center
-    # corners come back in a consistent order, so the midpoint of the first
-    # edge gives us a forward direction that rotates with the tag
     c = det.corners
     front_img = ((c[1][0] + c[2][0]) / 2.0, (c[1][1] + c[2][1]) / 2.0)
 
@@ -174,11 +163,8 @@ def tag_pose(det, fmap):
         heading += 360.0
     return x, y, heading
 
-
 def draw_overlay(frame, fmap, pose, enabled, status):
     if fmap.ready:
-        # field outline and the two centre platforms, so you can see whether
-        # the calibration actually lines up with the real field
         corners = [(0, 0), (FIELD_X_MM, 0), (FIELD_X_MM, FIELD_Y_MM), (0, FIELD_Y_MM)]
         pts = np.array([fmap.to_image(p) for p in corners], dtype=np.int32)
         cv2.polylines(frame, [pts], True, (0, 220, 255), 2)
@@ -197,7 +183,6 @@ def draw_overlay(frame, fmap, pose, enabled, status):
         txt = "NO TAG"
     cv2.putText(frame, txt, (12, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
     cv2.putText(frame, status, (12, 82), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
-
 
 def run_calibration(cap, detector, fmap, tag_id):
     """Place the robot on each known point in turn and press SPACE."""
@@ -246,7 +231,6 @@ def run_calibration(cap, detector, fmap, tag_id):
 
     print("calibration done")
     return True
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -336,8 +320,6 @@ def main():
                 cmd = CMD_GOTO_XY
                 status = f"goto {gx:.0f},{gy:.0f}"
 
-            # Pose goes out continuously at ~50 Hz. The robot disables itself if
-            # this stream stops, so it doubles as the link heartbeat.
             now = time.time()
             if cmd != CMD_NONE or (now - last_send) > 0.02:
                 link.send(pose or (0, 0, 0), pose is not None, cmd, gx, gy, target)
@@ -352,7 +334,6 @@ def main():
         cv2.destroyAllWindows()
 
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

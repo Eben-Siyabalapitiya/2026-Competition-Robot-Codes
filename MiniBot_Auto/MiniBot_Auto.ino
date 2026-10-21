@@ -1,12 +1,3 @@
-// MiniBot_Auto - RoboHax Sector Siege Autonomous Control Challenge
-//
-// Separate from MiniBot_Competition1.ino (that stays the teleop entry, rule E3).
-// NO gamepad in this sketch - any direct teleop after start = zero (rule S3).
-//
-// Architecture (the reference architecture on page 5 of the supplement):
-//   laptop camera -> AprilTag pose -> USB dongle -> ESP-NOW -> here -> motors
-// The laptop sends pose plus a high-level target. All planning and execution
-// happens on the Core V3, which is what E8.2 / E8.3 require.
 
 #include "auto_types.h"
 #include "esp_task_wdt.h"
@@ -15,8 +6,6 @@
 #include <WiFi.h>
 #include <esp_now.h>
 
-// ---------------------------------------------------------------- board stuff
-// same pin map as the competition sketch
 const uint8_t IO_PINS[13] = { 0, 32, 25, 26, 27, 14, 12, 13, 15, 2, 4, 22, 21 };
 
 #define User_BTN_A 35
@@ -45,7 +34,6 @@ float battVoltage = 0;
 bool  batteryWarn = false;
 const float BATT_WARN_V = 7.2;
 
-// ------------------------------------------------------------- motor plumbing
 MotorTypeConfig motorTypeConfigs[] = {
   { MG90_CR,     50, 500,  2500 },
   { MG90_Degree, 50, 500,  2500 },
@@ -79,7 +67,6 @@ void ConfigureMotorOutput(uint8_t slot, MotorType motorType) {
   Serial.printf("Motor slot %d on pin %d, type %d\n", slot, pin, motorType);
 }
 
-// drive smoothing, same idea as the teleop sketch
 float currentLeftOut  = 90;
 float currentRightOut = 90;
 const float SLEW_RATE = 25;
@@ -97,8 +84,6 @@ void SlewMove(float &current, float target) {
   }
 }
 
-// forward/turn in -100..100. Same sign both sides = straight, matching the
-// teleop sketch's side-swapped wiring.
 void SetDrive(float forward, float turn) {
   float left  = constrain(forward + turn, -100.0f, 100.0f);
   float right = constrain(forward - turn, -100.0f, 100.0f);
@@ -137,22 +122,13 @@ void StopAll() {
   for (int i = 1; i <= 12; i++) MotorOutput[i].write(90);
 }
 
-// ------------------------------------------------------------- field geometry
-// Field 72 x 48 in -> 1829 x 1219 mm. Origin at the blue end corner,
-// +X toward the orange end, +Y across the field. Heading 0 = +X, CCW positive.
-//
 // !! VERIFY EVERY NUMBER BELOW AGAINST THE ONSHAPE ARENA CAD !!
-// The manual gives platform sizes and wall offsets but not ramp placement.
 const int16_t FIELD_X_MM = 1829;
 const int16_t FIELD_Y_MM = 1219;
 
-// MP9.3 - robots start in the home zone between the centre platform and the
-// driver station, centred on the field centreline.
-const Pose2D START_BLUE   = { 300, 610, 0 };     // facing +X, into the field
-const Pose2D START_ORANGE = { 1529, 610, 180 };  // facing -X
+const Pose2D START_BLUE   = { 300, 610, 0 };
+const Pose2D START_ORANGE = { 1529, 610, 180 };
 
-// Corner platforms: 12 in hex, 0.5 in high, 6 in from the end wall and side
-// wall. Low enough to drive straight onto, so the target is just the centre.
 const Pose2D CORNER_TARGETS[] = {
   { 305, 305, 0 },    // TGT_CORNER_BLUE_A   ~12 in, 12 in   VERIFY
   { 305, 914, 0 },    // TGT_CORNER_BLUE_B   ~12 in, 36 in   VERIFY
@@ -160,31 +136,22 @@ const Pose2D CORNER_TARGETS[] = {
   { 1524, 914, 0 },   // TGT_CORNER_ORG_B    ~60 in, 36 in   VERIFY
 };
 
-// Centre platforms: 12 in hex, 2 in high, on the zone boundaries at x = 24 in
-// and x = 48 in, centred across the field. 3 ramps each, 2:1 run-to-rise.
-// Never turn on a ramp - stage, align, then climb straight.
 const CenterPlatform CENTER_PLATFORMS[2] = {
-  // TGT_CENTER_BLUE - boundary at x = 24 in (610 mm)
   { { 610, 610, 0 },
     { { { 410, 610, 0 },    0 },      // from the blue side, climb +X    VERIFY
       { { 810, 610, 180 },  180 },    // from the middle, climb -X       VERIFY
       { { 610, 360, 90 },   90 } } }, // from the side, climb +Y         VERIFY
-  // TGT_CENTER_ORANGE - boundary at x = 48 in (1219 mm)
   { { 1219, 610, 0 },
     { { { 1019, 610, 0 },   0 },      // VERIFY
       { { 1419, 610, 180 }, 180 },    // VERIFY
       { { 1219, 360, 90 },  90 } } }, // VERIFY
 };
 
-// Only the centre platforms are obstacles - they are 2 in tall walls unless you
-// are on a ramp. The corner platforms are 0.5 in and we drive straight over.
-// Radius = 12 in hex half-width (152) + robot half-width + margin.
 const Obstacle OBSTACLES[2] = {
   { 610,  610, 260 },
   { 1219, 610, 260 },
 };
 
-// ------------------------------------------------------------------ ESP-NOW
 volatile bool linkPacketReady = false;
 LinkPacket    rxPacket;
 uint16_t      lastSeq = 0;
@@ -197,7 +164,6 @@ uint8_t LinkChecksum(const uint8_t *buf, size_t len) {
   return c;
 }
 
-// Bluepad32 4.1.0 is built on arduino-esp32 2.x, so this is the 2.x signature.
 void OnEspNowRecv(const uint8_t *mac, const uint8_t *data, int len) {
   if (len != (int)sizeof(LinkPacket)) return;
 
@@ -211,14 +177,13 @@ void OnEspNowRecv(const uint8_t *mac, const uint8_t *data, int len) {
   linkPacketReady = true;
 }
 
-// --------------------------------------------------------------- robot state
 AutoState state = ST_DISABLED;
 
 Pose2D  pose         = { 0, 0, 0 };
 bool    poseFresh    = false;
-Pose2D  goal         = { 0, 0, 0 };   // where we are driving right now
-Pose2D  finalGoal    = { 0, 0, 0 };   // where we actually want to end up
-bool    hasDetour    = false;         // goal is a bypass point, not the real one
+Pose2D  goal         = { 0, 0, 0 };
+Pose2D  finalGoal    = { 0, 0, 0 };
+bool    hasDetour    = false;
 uint8_t activeTarget = TGT_NONE;
 int     activeRamp   = -1;
 bool    climbingTarget = false;
@@ -227,18 +192,17 @@ unsigned long holdStartMs  = 0;
 unsigned long matchStartMs = 0;
 bool          matchRunning = false;
 
-// Tuning. All of this wants a bench pass before the event.
-const unsigned long POSE_TIMEOUT_MS = 300;    // tag lost -> stop moving
-const unsigned long LINK_TIMEOUT_MS = 500;    // laptop gone -> disable (C9.6)
-const unsigned long MATCH_LIMIT_MS  = 90000;  // nothing runs past the match (C9.8)
-const unsigned long CAPTURE_HOLD_MS = 3000;   // platform needs 3.0 s continuous
+const unsigned long POSE_TIMEOUT_MS = 300;
+const unsigned long LINK_TIMEOUT_MS = 500;
+const unsigned long MATCH_LIMIT_MS  = 90000;
+const unsigned long CAPTURE_HOLD_MS = 3000;
 
 const float ARRIVE_TOL_MM     = 40.0f;
 const float STAGING_TOL_MM    = 30.0f;
 const float ALIGN_TOL_DEG     = 4.0f;
-const float TURN_IN_PLACE_DEG = 25.0f;   // bigger error than this, rotate first
+const float TURN_IN_PLACE_DEG = 25.0f;
 const float DRIVE_SPEED       = 55.0f;
-const float CLIMB_SPEED       = 80.0f;   // 26.5 deg ramp, needs commitment
+const float CLIMB_SPEED       = 80.0f;
 const float TURN_SPEED        = 45.0f;
 const float HEADING_KP        = 1.6f;
 
@@ -265,9 +229,6 @@ void EnterState(AutoState s) {
   if (s == ST_HOLD) holdStartMs = millis();
 }
 
-// ------------------------------------------------------- simple path shaping
-// Closest approach of segment AB to a point, so we can tell whether a straight
-// run would clip a centre platform instead of going round it.
 float SegmentPointDist(float ax, float ay, float bx, float by, float px, float py) {
   float vx = bx - ax, vy = by - ay;
   float wx = px - ax, wy = py - ay;
@@ -279,29 +240,23 @@ float SegmentPointDist(float ax, float ay, float bx, float by, float px, float p
   return sqrtf(dx * dx + dy * dy);
 }
 
-// If the straight line from here to (gx,gy) clips a platform, return a bypass
-// point beside it. This is what stops the robot cutting a diagonal into a
-// corner of the centre platform and wedging itself there.
 bool FindDetour(int16_t gx, int16_t gy, int16_t &outX, int16_t &outY) {
   for (const Obstacle &o : OBSTACLES) {
     float d = SegmentPointDist(pose.x_mm, pose.y_mm, gx, gy, o.x_mm, o.y_mm);
     if (d >= o.radius_mm) continue;
 
-    // we would clip this one - go around on whichever side has more room
     float dx = (float)gx - (float)pose.x_mm;
     float dy = (float)gy - (float)pose.y_mm;
     float len = sqrtf(dx * dx + dy * dy);
     if (len < 1.0f) return false;
     dx /= len; dy /= len;
 
-    // unit normal to the path
     float nx = -dy, ny = dx;
     float reach = o.radius_mm + 60.0f;
 
     float ax = o.x_mm + nx * reach, ay = o.y_mm + ny * reach;
     float bx = o.x_mm - nx * reach, by = o.y_mm - ny * reach;
 
-    // prefer the side that stays on the field, then the nearer one
     bool aOk = (ax > 150 && ax < FIELD_X_MM - 150 && ay > 150 && ay < FIELD_Y_MM - 150);
     bool bOk = (bx > 150 && bx < FIELD_X_MM - 150 && by > 150 && by < FIELD_Y_MM - 150);
 
@@ -319,7 +274,6 @@ bool FindDetour(int16_t gx, int16_t gy, int16_t &outX, int16_t &outY) {
   return false;
 }
 
-// set the immediate goal, inserting a bypass point if the direct line is blocked
 void SetGoalWithDetour(int16_t gx, int16_t gy) {
   finalGoal.x_mm = gx;
   finalGoal.y_mm = gy;
@@ -358,13 +312,11 @@ void Disable(const char *why) {
   state = ST_DISABLED;
 }
 
-// pick whichever ramp entry is cheapest to reach from where we are now
 int ChooseRamp(const CenterPlatform &p) {
   int best = 0;
   float bestCost = 1e9f;
   for (int i = 0; i < 3; i++) {
     float d = DistanceTo(p.ramps[i].staging.x_mm, p.ramps[i].staging.y_mm);
-    // a penalty for having to spin around to face the ramp
     float turn = fabsf(NormalizeDeg(p.ramps[i].climb_heading - pose.heading_deg));
     float cost = d + turn * 2.0f;
     if (cost < bestCost) {
@@ -433,21 +385,19 @@ void HandleCommand(const LinkPacket &p) {
   }
 }
 
-// --------------------------------------------------------------- status LEDs
 void StatusLeds() {
   CRGB c;
   switch (state) {
-    case ST_DISABLED: c = CRGB(255, 0, 0);     break;  // red, not enabled
-    case ST_IDLE:     c = CRGB(0, 80, 255);    break;  // icy blue, no target
-    case ST_DRIVE:    c = CRGB(0, 255, 0);     break;  // green, driving
-    case ST_ALIGN:    c = CRGB(255, 180, 0);   break;  // amber, squaring up
-    case ST_CLIMB:    c = CRGB(255, 0, 255);   break;  // magenta, on the ramp
-    case ST_HOLD:     c = CRGB(255, 255, 255); break;  // white, counting 3 s
+    case ST_DISABLED: c = CRGB(255, 0, 0);     break;
+    case ST_IDLE:     c = CRGB(0, 80, 255);    break;
+    case ST_DRIVE:    c = CRGB(0, 255, 0);     break;
+    case ST_ALIGN:    c = CRGB(255, 180, 0);   break;
+    case ST_CLIMB:    c = CRGB(255, 0, 255);   break;
+    case ST_HOLD:     c = CRGB(255, 255, 255); break;
     case ST_DONE:     c = CRGB(0, 255, 120);   break;
   }
   if (batteryWarn) c = CRGB(255, 0, 0);
   if (!poseFresh && state != ST_DISABLED) {
-    // flash the state colour when we have lost the tag
     bool on = (millis() / 100) % 2 == 0;
     if (!on) c = CRGB(0, 0, 0);
   }
@@ -456,7 +406,6 @@ void StatusLeds() {
   FastLED.show();
 }
 
-// -------------------------------------------------------------------- setup
 void setup() {
   Serial.begin(115200);
 
@@ -476,13 +425,12 @@ void setup() {
   FastLED.clear();
   FastLED.show();
 
-  // motors first, and they come up neutral (C9.7 - outputs default safe)
-  ConfigureMotorOutput(1, N20Plus);   // RF
-  ConfigureMotorOutput(2, N20Plus);   // RM
-  ConfigureMotorOutput(3, N20Plus);   // RB
-  ConfigureMotorOutput(4, N20Plus);   // LF
-  ConfigureMotorOutput(5, N20Plus);   // LM
-  ConfigureMotorOutput(6, N20Plus);   // LB
+  ConfigureMotorOutput(1, N20Plus);
+  ConfigureMotorOutput(2, N20Plus);
+  ConfigureMotorOutput(3, N20Plus);
+  ConfigureMotorOutput(4, N20Plus);
+  ConfigureMotorOutput(5, N20Plus);
+  ConfigureMotorOutput(6, N20Plus);
   ConfigureMotorOutput(7, MG90_Degree);
   ConfigureMotorOutput(8, MG90_Degree);
   ConfigureMotorOutput(9, MG90_Degree);
@@ -490,7 +438,6 @@ void setup() {
   ConfigureMotorOutput(12, N20Plus);
   StopAll();
 
-  // ESP-NOW. No Bluepad32 here, so the radio is ours alone.
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
   Serial.print("robot MAC (put this in the dongle sketch): ");
@@ -507,7 +454,6 @@ void setup() {
   Serial.println("MiniBot_Auto ready, waiting for CMD_ENABLE");
 }
 
-// --------------------------------------------------------------------- loop
 void loop() {
   esp_task_wdt_reset();
 
@@ -516,12 +462,11 @@ void loop() {
 
   unsigned long now = millis();
 
-  // ---- take in whatever the laptop sent
   if (linkPacketReady) {
     linkPacketReady = false;
     LinkPacket p = rxPacket;
 
-    if (p.seq != lastSeq) {       // ignore repeats
+    if (p.seq != lastSeq) {
       lastSeq = p.seq;
       lastPacketMs = now;
 
@@ -537,7 +482,6 @@ void loop() {
 
   poseFresh = (now - lastPoseMs) < POSE_TIMEOUT_MS;
 
-  // ---- failsafes, before anything is allowed to drive
   if (state != ST_DISABLED) {
     if (now - lastPacketMs > LINK_TIMEOUT_MS) {
       Disable("link lost");
@@ -546,7 +490,6 @@ void loop() {
     }
   }
 
-  // ---- state machine
   switch (state) {
     case ST_DISABLED:
       StopAll();
@@ -558,7 +501,7 @@ void loop() {
       break;
 
     case ST_DRIVE: {
-      if (!poseFresh) {      // no tag, no driving
+      if (!poseFresh) {
         SetDrive(0, 0);
         break;
       }
@@ -567,7 +510,6 @@ void loop() {
 
       if (dist < tol) {
         if (hasDetour) {
-          // bypass point reached, now head for the real goal
           SetGoalWithDetour(finalGoal.x_mm, finalGoal.y_mm);
           break;
         }
@@ -604,8 +546,6 @@ void loop() {
     }
 
     case ST_CLIMB: {
-      // straight up, no steering. If the tag drops out mid-ramp we keep going
-      // briefly rather than stopping dead halfway up.
       const CenterPlatform &p = CENTER_PLATFORMS[activeTarget == TGT_CENTER_BLUE ? 0 : 1];
       float dist = poseFresh ? DistanceTo(p.center.x_mm, p.center.y_mm) : 999.0f;
 
@@ -619,7 +559,6 @@ void loop() {
     }
 
     case ST_HOLD: {
-      // sit still, the platform needs 3.0 s of continuous engagement
       SetDrive(0, 0);
       if (now - holdStartMs >= CAPTURE_HOLD_MS) {
         Serial.println("hold complete");

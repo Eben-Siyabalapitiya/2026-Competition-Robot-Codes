@@ -1,16 +1,7 @@
-// EspNowDongle - USB to ESP-NOW bridge for MiniBot_Auto
-//
-// A laptop cannot send ESP-NOW by itself, it is an ESP32-to-ESP32 protocol.
-// So any spare ESP32 sits on USB and forwards packets from the vision script
-// to the robot. Flash this with the plain esp32 core, NOT bluepad32.
-//
-// Wire format on USB: 0xAB 0xCD then the raw LinkPacket bytes.
-// Baud 921600 to keep the pose stream snappy.
 
 #include <WiFi.h>
 #include <esp_now.h>
 
-// >>> put the robot's MAC here. MiniBot_Auto prints it on boot at 115200. <<<
 uint8_t ROBOT_MAC[6] = { 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
 
 #define LINK_MAGIC   0x5A
@@ -35,7 +26,7 @@ struct LinkPacket {
 
 uint8_t buf[sizeof(LinkPacket)];
 int     fill = 0;
-int     rxState = 0;   // 0 = looking for 0xAB, 1 = looking for 0xCD, 2 = body
+int     rxState = 0;
 
 void setup() {
   Serial.begin(921600);
@@ -50,7 +41,7 @@ void setup() {
 
   esp_now_peer_info_t peer = {};
   memcpy(peer.peer_addr, ROBOT_MAC, 6);
-  peer.channel = 0;         // follow the current wifi channel
+  peer.channel = 0;
   peer.encrypt = false;
 
   if (esp_now_add_peer(&peer) != ESP_OK) {

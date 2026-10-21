@@ -6,7 +6,8 @@ REM (for example  set PORT=COM5  ). Leave it blank to run vision only, which
 REM sends nothing to the robot and is safe for testing.
 set PORT=
 
-set PY=C:\Users\ebene\AppData\Local\Programs\Python\Python312\python.exe
+set PY=py
+where py >nul 2>&1 || set PY=%LOCALAPPDATA%\Programs\Python\Python312\python.exe
 set APP=%~dp0web_ui.py
 
 start "" http://localhost:8000

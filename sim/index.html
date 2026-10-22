@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sector Siege Path Sim</title>
+
+<style>
+/* layout: one column — status strip, field, toolbar. nothing else competes with the field. */
+:root {
+  --bg: #f6f7f8; --panel: #fff; --sunk: #eceef1;
+  --line: #dcdfe4; --line-soft: #e8eaee;
+  --fg: #1a1d22; --dim: #666c78;
+  --accent: #b9770e; --accent-fill: #eda42b;
+  --track: #5b50c9; --ok: #117a5c; --bad: #ad3b32;
+  --floor: #e7e9ec; --plat: #c2c6cd; --tile: #3aa787;
+  --bot: #2f7fd0;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1013; --panel: #171a1f; --sunk: #1e222a;
+    --line: #2a2f38; --line-soft: #22262e;
+    --fg: #e8eaee; --dim: #949aa6;
+    --accent: #eda42b; --accent-fill: #a87317;
+    --track: #9a90ff; --ok: #3fbd94; --bad: #e0695f;
+    --floor: #1f232a; --plat: #394049; --tile: #1d6b54;
+    --bot: #4d9ae8;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1013; --panel: #171a1f; --sunk: #1e222a;
+  --line: #2a2f38; --line-soft: #22262e;
+  --fg: #e8eaee; --dim: #949aa6;
+  --accent: #eda42b; --accent-fill: #a87317;
+  --track: #9a90ff; --ok: #3fbd94; --bad: #e0695f;
+  --floor: #1f232a; --plat: #394049; --tile: #1d6b54;
+  --bot: #4d9ae8;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); margin: 0;
+  font: 400 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap {
+  max-width: 940px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 18px 32px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -0.005em; }
+.coords {
+  font-variant-numeric: tabular-nums; font-size: 13px; color: var(--dim);
+  display: flex; gap: 14px;
+}
+.coords b { font-weight: 500; color: var(--fg); }
+
+.stage { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); line-height: 0; }
+canvas { display: block; width: 100%; height: auto; touch-action: none; }
+
+.bar { display: flex; flex-wrap: wrap; gap: 7px; }
+button {
+  font: 500 13px/1 system-ui, -apple-system, sans-serif; color: var(--fg);
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 7px; padding: 9px 13px; cursor: pointer;
+}
+button:hover:not(:disabled) { background: var(--sunk); }
+button:focus-visible { outline: 2px solid var(--track); outline-offset: 1px; }
+button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.go { background: var(--track); border-color: var(--track); color: #fff; }
+button.go:hover:not(:disabled) { filter: brightness(1.08); background: var(--track); }
+button:disabled { opacity: .4; cursor: default; }
+.spacer { flex: 1 1 auto; }
+
+.status {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 13px; color: var(--dim); min-height: 20px;
+}
+.status .tick { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; }
+.status.good .tick { background: var(--ok); }
+.status.bad { color: var(--bad); }
+.status.bad .tick { background: var(--bad); }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="top">
+    <h1>Sector Siege path sim</h1>
+    <div class="coords">
+      <span>x <b id="r-x">150</b></span>
+      <span>y <b id="r-y">610</b></span>
+      <span>hdg <b id="r-h">0°</b></span>
+      <span>pts <b id="r-n">0</b></span>
+      <span>t <b id="r-t">0.0s</b></span>
+    </div>
+  </div>
+
+  <div class="stage"><canvas id="c"></canvas></div>
+
+  <div class="bar">
+    <button id="draw">Draw path</button>
+    <button id="run" class="go">Run</button>
+    <button id="undo">Undo</button>
+    <button id="clear">Clear path</button>
+    <span class="spacer"></span>
+    <button id="side">Blue side</button>
+    <button id="reset">Reset</button>
+  </div>
+
+  <div class="status" id="status"><i class="tick"></i><span id="msg">Press Draw path, then click the dot on the robot.</span></div>
+</div>
+
+<script>
+const FX = 1829, FY = 1219;
+const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+const MAX_V = 620, MAX_W = 190;
+const DRIVE_SPEED = 55, TURN_SPEED = 45, HEADING_KP = 1.6;
+const TURN_IN_PLACE = 25, ARRIVE_TOL = 40, WAYPOINT_TOL = 90, HOLD_MS = 3000;
+const ROBOT = 152, PATH_MAX = 16, HEX_IN = 102, RAMP_RUN = 102, CORNER_R = 203;
+const SNAP_LOCK = 5, SNAP_FREE = 9;
+
+const CENTERS = [
+  {x: 610, y: 610, ramps: [0, 120, 240]},
+  {x: 1219, y: 610, ramps: [180, 60, 300]}
+];
+const CORNERS = [
+  {x: 305, y: 305, rot: 0}, {x: 305, y: 914, rot: 0},
+  {x: 1524, y: 305, rot: 60}, {x: 1524, y: 914, rot: 60}
+];
+const TILES = [
+  [610, 940], [665, 985], [610, 280], [665, 235],
+  [1219, 940], [1164, 985], [1219, 280], [1164, 235], [914, 610]
+];
+
+const norm = a => { while (a > 180) a -= 360; while (a < -180) a += 360; return a; };
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+function hexPoly(cx, cy, r, rot) {
+  const p = [];
+  for (let i = 0; i < 6; i++) {
+    const a = (rot + 30 + i * 60) * D2R;
+    p.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+  }
+  return p;
+}
+function truncTri(cx, cy, R, rot) {
+  const v = [0, 120, 240].map(a => {
+    const t = (a + rot) * D2R;
+    return [cx + R * Math.cos(t), cy + R * Math.sin(t)];
+  });
+  const k = 0.26, out = [];
+  for (let i = 0; i < 3; i++) {
+    const a = v[i], b = v[(i + 1) % 3];
+    out.push([a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k]);
+    out.push([a[0] + (b[0] - a[0]) * (1 - k), a[1] + (b[1] - a[1]) * (1 - k)]);
+  }
+  return out;
+}
+function rampPoly(c, nd) {
+  const n = nd * D2R, t = n + Math.PI / 2;
+  const half = (HEX_IN / Math.cos(30 * D2R)) * Math.sin(30 * D2R);
+  const bx = c.x + HEX_IN * Math.cos(n), by = c.y + HEX_IN * Math.sin(n);
+  const ox = bx + RAMP_RUN * Math.cos(n), oy = by + RAMP_RUN * Math.sin(n);
+  const sh = half * 0.78;
+  return [
+    [bx + half * Math.cos(t), by + half * Math.sin(t)],
+    [ox + sh * Math.cos(t), oy + sh * Math.sin(t)],
+    [ox - sh * Math.cos(t), oy - sh * Math.sin(t)],
+    [bx - half * Math.cos(t), by - half * Math.sin(t)]
+  ];
+}
+function inPoly(pt, poly) {
+  let hit = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if ((yi > pt[1]) !== (yj > pt[1]) && pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi) hit = !hit;
+  }
+  return hit;
+}
+
+const BODIES = [];
+CENTERS.forEach(c => BODIES.push({poly: hexPoly(c.x, c.y, HEX_IN / Math.cos(30 * D2R), 0), ramps: c.ramps, kind: 'centre'}));
+CORNERS.forEach(c => BODIES.push({poly: truncTri(c.x, c.y, CORNER_R, c.rot), ramps: [c.rot + 180, c.rot + 60, c.rot + 300], kind: 'corner'}));
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+let scale = 1;
+const S = v => v * scale;
+
+function fit() {
+  const w = cv.parentElement.clientWidth;
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(w * dpr);
+  cv.height = Math.round(w * (FY / FX) * dpr);
+  cv.style.height = Math.round(w * (FY / FX)) + 'px';
+  scale = (w * dpr) / FX;
+  draw();
+}
+function toField(px, py) {
+  const r = cv.getBoundingClientRect();
+  const dpr = cv.width / r.width;
+  return [((px - r.left) * dpr) / scale, ((py - r.top) * dpr) / scale];
+}
+
+let bot = {x: 150, y: 610, h: 0};
+let side = 'blue';
+let placed = [], anchored = false, drawMode = false, cursor = null;
+let running = false, legIdx = 0, holdAt = 0, state = 'idle';
+let track = [], ghosts = [], t0 = 0, elapsed = 0, warn = '', snapped = null;
+
+function polyPath(poly) {
+  ctx.beginPath();
+  ctx.moveTo(S(poly[0][0]), S(poly[0][1]));
+  for (let i = 1; i < poly.length; i++) ctx.lineTo(S(poly[i][0]), S(poly[i][1]));
+  ctx.closePath();
+}
+function polyline(pts) {
+  ctx.beginPath();
+  ctx.moveTo(S(pts[0][0]), S(pts[0][1]));
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(S(pts[i][0]), S(pts[i][1]));
+}
+
+function draw() {
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = css('--floor');
+  ctx.fillRect(0, 0, cv.width, cv.height);
+
+  ctx.strokeStyle = css('--line');
+  ctx.lineWidth = Math.max(1, S(3));
+  ctx.setLineDash([S(24), S(18)]);
+  [610, 1219].forEach(x => { ctx.beginPath(); ctx.moveTo(S(x), 0); ctx.lineTo(S(x), S(FY)); ctx.stroke(); });
+  ctx.setLineDash([]);
+
+  CENTERS.forEach(c => c.ramps.forEach(n => {
+    polyPath(rampPoly(c, n));
+    ctx.fillStyle = css('--accent-fill'); ctx.globalAlpha = .62; ctx.fill(); ctx.globalAlpha = 1;
+  }));
+
+  BODIES.forEach(b => {
+    polyPath(b.poly);
+    ctx.fillStyle = css('--plat'); ctx.fill();
+    if (b.kind === 'corner') {
+      for (let i = 0; i < 6; i += 2) {
+        const a = b.poly[i], d = b.poly[(i + 1) % 6];
+        ctx.beginPath(); ctx.moveTo(S(a[0]), S(a[1])); ctx.lineTo(S(d[0]), S(d[1]));
+        ctx.strokeStyle = css('--accent-fill'); ctx.lineWidth = Math.max(2, S(11));
+        ctx.lineCap = 'butt'; ctx.stroke();
+      }
+    }
+  });
+
+  TILES.forEach(([x, y]) => {
+    polyPath(hexPoly(x, y, 58, 0));
+    ctx.fillStyle = css('--tile'); ctx.globalAlpha = .7; ctx.fill(); ctx.globalAlpha = 1;
+  });
+
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ghosts.forEach(g => {
+    if (g.length < 2) return;
+    polyline(g);
+    ctx.strokeStyle = css('--track'); ctx.globalAlpha = .22;
+    ctx.lineWidth = Math.max(1, S(6)); ctx.stroke(); ctx.globalAlpha = 1;
+  });
+  if (track.length > 1) {
+    polyline(track);
+    ctx.strokeStyle = css('--track'); ctx.globalAlpha = .8;
+    ctx.lineWidth = Math.max(1, S(7)); ctx.stroke(); ctx.globalAlpha = 1;
+  }
+
+  if (placed.length > 1) {
+    polyline(placed);
+    ctx.strokeStyle = css('--accent'); ctx.lineWidth = Math.max(2, S(8)); ctx.stroke();
+  }
+  if (anchored && cursor && placed.length) {
+    const last = placed[placed.length - 1];
+    const locked = snapped !== null;
+    ctx.setLineDash(locked ? [] : [S(26), S(18)]);
+    ctx.beginPath(); ctx.moveTo(S(last[0]), S(last[1])); ctx.lineTo(S(cursor[0]), S(cursor[1]));
+    ctx.strokeStyle = locked ? css('--ok') : css('--accent');
+    ctx.globalAlpha = locked ? .9 : .6;
+    ctx.lineWidth = Math.max(2, S(locked ? 8 : 7)); ctx.stroke();
+    ctx.globalAlpha = 1; ctx.setLineDash([]);
+    if (locked) {
+      const mx = (last[0] + cursor[0]) / 2, my = (last[1] + cursor[1]) / 2;
+      const t = (snapped + 90) * D2R, g = 46;
+      ctx.beginPath();
+      ctx.moveTo(S(mx + g * Math.cos(t)), S(my + g * Math.sin(t)));
+      ctx.lineTo(S(mx - g * Math.cos(t)), S(my - g * Math.sin(t)));
+      ctx.strokeStyle = css('--ok'); ctx.lineWidth = Math.max(2, S(7)); ctx.stroke();
+    }
+  }
+  placed.forEach((p, i) => {
+    if (i === 0) return;
+    ctx.beginPath(); ctx.arc(S(p[0]), S(p[1]), Math.max(3, S(20)), 0, 7);
+    ctx.fillStyle = css('--accent'); ctx.fill();
+    ctx.strokeStyle = css('--floor'); ctx.lineWidth = Math.max(1, S(5)); ctx.stroke();
+  });
+
+  ctx.save();
+  ctx.translate(S(bot.x), S(bot.y));
+  ctx.rotate(bot.h * D2R);
+  const h = S(ROBOT / 2);
+  ctx.fillStyle = css('--panel');
+  ctx.strokeStyle = css('--bot'); ctx.lineWidth = Math.max(1, S(7));
+  ctx.beginPath(); ctx.rect(-h, -h, h * 2, h * 2); ctx.fill(); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(h * 0.92, 0); ctx.lineTo(h * 0.34, -h * 0.42); ctx.lineTo(h * 0.34, h * 0.42);
+  ctx.closePath(); ctx.fillStyle = css('--bot'); ctx.globalAlpha = .5; ctx.fill(); ctx.globalAlpha = 1;
+  const t = h * 0.42;
+  ctx.fillStyle = css('--fg');
+  ctx.fillRect(-t, -t, t * 2, t * 2);
+  ctx.fillStyle = css('--panel');
+  ctx.fillRect(-t * 0.42, -t * 0.42, t * 0.84, t * 0.84);
+  ctx.restore();
+
+  if (drawMode && !anchored) {
+    ctx.beginPath(); ctx.arc(S(bot.x), S(bot.y), Math.max(8, S(135)), 0, 7);
+    ctx.strokeStyle = css('--accent'); ctx.lineWidth = Math.max(2, S(7)); ctx.stroke();
+  }
+}
+
+function say(m, kind) {
+  document.getElementById('msg').textContent = m;
+  document.getElementById('status').className = 'status' + (kind ? ' ' + kind : '');
+}
+function readout() {
+  document.getElementById('r-x').textContent = bot.x.toFixed(0);
+  document.getElementById('r-y').textContent = bot.y.toFixed(0);
+  document.getElementById('r-h').textContent = norm(bot.h).toFixed(0) + '°';
+  document.getElementById('r-n').textContent = Math.max(0, placed.length - 1);
+  document.getElementById('r-t').textContent = elapsed.toFixed(1) + 's';
+  document.getElementById('run').disabled = placed.length < 2 || running;
+  document.getElementById('undo').disabled = placed.length < 2 || running;
+}
+
+function applySnap(raw) {
+  const a = placed[placed.length - 1];
+  const dx = raw[0] - a[0], dy = raw[1] - a[1];
+  const len = Math.hypot(dx, dy);
+  if (len < 30) { snapped = null; return raw; }
+  const ang = Math.atan2(dy, dx) * R2D;
+  const near = Math.round(ang / 90) * 90;
+  const off = Math.abs(norm(ang - near));
+  const band = snapped !== null ? SNAP_FREE : SNAP_LOCK;
+  if (off <= band) {
+    snapped = norm(near);
+    const t = near * D2R;
+    return [a[0] + len * Math.cos(t), a[1] + len * Math.sin(t)];
+  }
+  snapped = null;
+  return raw;
+}
+
+cv.addEventListener('pointermove', e => {
+  if (!drawMode || !anchored) return;
+  cursor = applySnap(toField(e.clientX, e.clientY));
+  draw();
+});
+cv.addEventListener('click', e => {
+  if (!drawMode || running) return;
+  const p = toField(e.clientX, e.clientY);
+  if (!anchored) {
+    if (Math.hypot(p[0] - bot.x, p[1] - bot.y) > 170) {
+      say('Click the dot on the robot to start the line.', 'bad');
+      return;
+    }
+    placed = [[bot.x, bot.y]];
+    anchored = true; cursor = [bot.x, bot.y];
+    say('Move to stretch the line, click to place a point.');
+    draw(); readout(); return;
+  }
+  if (p[0] < 0 || p[0] > FX || p[1] < 0 || p[1] > FY) { say('That point is off the field.', 'bad'); return; }
+  if (placed.length - 1 >= PATH_MAX) { say('That is all ' + PATH_MAX + ' waypoints the firmware holds.', 'bad'); return; }
+  placed.push(cursor && snapped !== null ? cursor.slice() : p);
+  const a = placed[placed.length - 2], b = placed[placed.length - 1];
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]).toFixed(0);
+  const ang = norm(Math.atan2(b[1] - a[1], b[0] - a[0]) * R2D).toFixed(0);
+  snapped = null;
+  say('Point ' + (placed.length - 1) + ' placed — ' + len + ' mm at ' + ang + '°.');
+  draw(); readout();
+});
+
+function setDraw(on) {
+  drawMode = on;
+  if (!on) { anchored = false; cursor = null; }
+  const b = document.getElementById('draw');
+  b.classList.toggle('on', on);
+  b.textContent = on ? 'Placing' : 'Draw path';
+  draw();
+}
+
+document.getElementById('draw').onclick = () => {
+  if (!drawMode) { placed = []; anchored = false; }
+  setDraw(!drawMode);
+  say(drawMode ? 'Click the dot on the robot to anchor the line.' : 'Draw mode off.');
+  readout();
+};
+document.getElementById('undo').onclick = () => {
+  if (placed.length > 1) { placed.pop(); say('Point removed.'); draw(); readout(); }
+};
+document.getElementById('clear').onclick = () => {
+  placed = []; anchored = false; setDraw(false);
+  say('Path cleared. The robot stays where it is.');
+  draw(); readout();
+};
+document.getElementById('reset').onclick = () => {
+  bot = startPose(); track = []; ghosts = []; placed = []; anchored = false;
+  running = false; state = 'idle'; elapsed = 0; warn = '';
+  setDraw(false);
+  say('Back at the starting square.');
+  draw(); readout();
+};
+document.getElementById('side').onclick = () => {
+  side = side === 'blue' ? 'orange' : 'blue';
+  document.getElementById('side').textContent = side === 'blue' ? 'Blue side' : 'Orange side';
+  document.getElementById('reset').click();
+};
+document.getElementById('run').onclick = () => {
+  if (placed.length < 2) { say('Place at least one point first.', 'bad'); return; }
+  setDraw(false);
+  if (track.length > 1) ghosts.push(track);
+  track = [[bot.x, bot.y]];
+  legIdx = 1; running = true; state = 'drive'; warn = '';
+  elapsed = 0; t0 = performance.now();
+  say('Running.');
+  readout();
+};
+
+function startPose() {
+  return side === 'blue' ? {x: 150, y: 610, h: 0} : {x: FX - 150, y: 610, h: 180};
+}
+function botCorners() {
+  const h = ROBOT / 2, c = Math.cos(bot.h * D2R), s = Math.sin(bot.h * D2R);
+  return [[h, h], [h, -h], [-h, -h], [-h, h]].map(([a, b]) =>
+    [bot.x + a * c - b * s, bot.y + a * s + b * c]);
+}
+function hazard() {
+  const pts = [[bot.x, bot.y]].concat(botCorners());
+  for (const b of BODIES) {
+    const centreIn = inPoly(pts[0], b.poly);
+    const edgeIn = pts.slice(1).some(p => inPoly(p, b.poly));
+    if (!centreIn && !edgeIn) continue;
+    const ok = b.ramps.some(r => Math.abs(norm(bot.h - r - 180)) < 30);
+    if (ok) return '';
+    if (!centreIn) return 'Clipped the edge of a platform — not enough room for a 6 in robot there.';
+    return b.kind === 'centre'
+      ? 'Wedged on the side of a centre platform instead of a ramp.'
+      : 'Caught a short corner of a corner platform instead of a long side.';
+  }
+  return '';
+}
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+
+  if (running) {
+    elapsed = (now - t0) / 1000;
+    if (state === 'drive') {
+      const g = placed[legIdx];
+      const dist = Math.hypot(g[0] - bot.x, g[1] - bot.y);
+      const lastLeg = legIdx >= placed.length - 1;
+      if (dist < (lastLeg ? ARRIVE_TOL : WAYPOINT_TOL)) {
+        if (lastLeg) { state = 'hold'; holdAt = now; }
+        else legIdx++;
+      } else {
+        const err = norm(Math.atan2(g[1] - bot.y, g[0] - bot.x) * R2D - bot.h);
+        if (Math.abs(err) > TURN_IN_PLACE) {
+          bot.h = norm(bot.h + Math.sign(err) * (TURN_SPEED / 100) * MAX_W * dt);
+        } else {
+          const turn = Math.max(-40, Math.min(40, HEADING_KP * err));
+          bot.h = norm(bot.h + (turn / 100) * MAX_W * dt);
+          const v = (DRIVE_SPEED / 100) * MAX_V * dt;
+          bot.x += v * Math.cos(bot.h * D2R);
+          bot.y += v * Math.sin(bot.h * D2R);
+          const tp = track[track.length - 1];
+          if (!tp || Math.hypot(bot.x - tp[0], bot.y - tp[1]) > 12) track.push([bot.x, bot.y]);
+        }
+        const hz = hazard();
+        if (hz && hz !== warn) { warn = hz; say(hz, 'bad'); }
+      }
+      if (bot.x < 0 || bot.x > FX || bot.y < 0 || bot.y > FY) {
+        bot.x = Math.max(0, Math.min(FX, bot.x));
+        bot.y = Math.max(0, Math.min(FY, bot.y));
+        running = false; state = 'idle';
+        say('Drove into the perimeter wall.', 'bad');
+      }
+    } else if (state === 'hold') {
+      if (now - holdAt > HOLD_MS) {
+        state = 'idle'; running = false;
+        placed = []; anchored = false;
+        if (!warn) say('Arrived in ' + elapsed.toFixed(1) + 's and held 3s. Draw again from here.', 'good');
+      }
+    }
+    draw(); readout();
+  }
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener('resize', fit);
+fit(); readout();
+requestAnimationFrame(loop);
+</script>
+
+</body>
+</html>

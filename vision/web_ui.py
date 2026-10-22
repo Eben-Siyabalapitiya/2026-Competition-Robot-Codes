@@ -18,6 +18,7 @@ Then open http://localhost:8000
 import argparse
 import threading
 import time
+from collections import deque
 
 import cv2
 import numpy as np
@@ -32,6 +33,10 @@ from minibot_vision import (
     CMD_GOTO_TGT,
     CMD_GOTO_XY,
     CMD_NONE,
+    CMD_PATH_ADD,
+    CMD_PATH_CLEAR,
+    CMD_PATH_RUN,
+    PATH_MAX,
     FIELD_X_MM,
     FIELD_Y_MM,
     FieldMap,
@@ -40,6 +45,28 @@ from minibot_vision import (
 )
 
 app = Flask(__name__)
+
+PATH_EPSILON_MM = 55.0
+
+def thin_path(pts):
+    if len(pts) < 3:
+        return pts
+    ax, ay = pts[0]
+    bx, by = pts[-1]
+    dx, dy = bx - ax, by - ay
+    span = (dx * dx + dy * dy) ** 0.5
+    worst, worst_i = -1.0, 0
+    for i in range(1, len(pts) - 1):
+        px, py = pts[i]
+        if span < 1e-6:
+            d = ((px - ax) ** 2 + (py - ay) ** 2) ** 0.5
+        else:
+            d = abs(dy * px - dx * py + bx * ay - by * ax) / span
+        if d > worst:
+            worst, worst_i = d, i
+    if worst <= PATH_EPSILON_MM:
+        return [pts[0], pts[-1]]
+    return thin_path(pts[: worst_i + 1])[:-1] + thin_path(pts[worst_i:])
 
 TARGET_POINTS = {
     1: ((305, 305), "corner blue A"),
@@ -70,7 +97,8 @@ class Controller:
         self.status = "not calibrated"
         self.calib_shots = []
 
-        self.pending = None
+        self.pending = deque()
+        self.path = []
         self.goal = None
         self.goal_label = ""
         self.running = True
@@ -103,14 +131,14 @@ class Controller:
 
             if self.fmap.ready:
                 self.draw_field(frame)
+                self.draw_path(frame)
                 self.draw_goal(frame, pose)
 
             with self.lock:
                 self.pose = pose
                 self.tag_center = centre
                 self.frame = frame
-                pending = self.pending
-                self.pending = None
+                pending = self.pending.popleft() if self.pending else None
 
             cmd, gx, gy, target = pending if pending else (CMD_NONE, 0, 0, 0)
 
@@ -127,6 +155,20 @@ class Controller:
             cv2.circle(frame, self.fmap.to_image(cxy), 8, (255, 120, 0), 2)
         for t in CALIB_POINTS:
             cv2.circle(frame, self.fmap.to_image(t), 5, (0, 255, 0), 1)
+
+    def draw_path(self, frame):
+        with self.lock:
+            pts = list(self.path)
+        if len(pts) < 2:
+            return
+        img = [self.fmap.to_image(p) for p in pts]
+        for a, b in zip(img, img[1:]):
+            cv2.line(frame, a, b, (255, 170, 60), 2, cv2.LINE_AA)
+        for i, p in enumerate(img):
+            cv2.circle(frame, p, 5, (255, 170, 60), -1, cv2.LINE_AA)
+            cv2.circle(frame, p, 5, (20, 20, 20), 1, cv2.LINE_AA)
+            cv2.putText(frame, str(i + 1), (p[0] + 8, p[1] - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 170, 60), 1, cv2.LINE_AA)
 
     def draw_goal(self, frame, pose):
         with self.lock:
@@ -173,7 +215,19 @@ class Controller:
 
     def queue(self, cmd, gx=0, gy=0, target=0):
         with self.lock:
-            self.pending = (cmd, gx, gy, target)
+            self.pending.append((cmd, gx, gy, target))
+
+    def set_path(self, pts):
+        with self.lock:
+            self.path = list(pts)
+        self.queue(CMD_PATH_CLEAR)
+        for i, (px, py) in enumerate(pts):
+            self.queue(CMD_PATH_ADD, gx=px, gy=py, target=i)
+
+    def clear_path(self):
+        with self.lock:
+            self.path = []
+        self.queue(CMD_PATH_CLEAR)
 
     def capture_calib(self):
         with self.lock:
@@ -298,6 +352,46 @@ def click():
     ctl.status = f"driving to {fx:.0f},{fy:.0f}"
     ctl.queue(CMD_GOTO_XY, gx=fx, gy=fy)
     return jsonify({"message": f"going to {fx:.0f},{fy:.0f}"})
+
+@app.route("/api/path", methods=["POST"])
+def path_set():
+    if not ctl.fmap.ready:
+        return jsonify({"message": "calibrate first"})
+    raw = request.json.get("points", [])
+    if len(raw) < 2:
+        return jsonify({"message": "draw a path with at least two points"})
+    pts = []
+    for p in raw:
+        fx, fy = ctl.fmap.to_field((float(p["x"]), float(p["y"])))
+        if not (0 <= fx <= FIELD_X_MM and 0 <= fy <= FIELD_Y_MM):
+            return jsonify({"message": "part of that path is off the field"})
+        pts.append((int(round(fx)), int(round(fy))))
+    pts = thin_path(pts)
+    if len(pts) > PATH_MAX:
+        return jsonify({"message": f"path too complex, {len(pts)} points but the limit is {PATH_MAX}"})
+    ctl.set_path(pts)
+    ctl.status = f"path loaded, {len(pts)} points"
+    return jsonify({"message": f"path loaded, {len(pts)} points", "count": len(pts)})
+
+@app.route("/api/path/run", methods=["POST"])
+def path_run():
+    with ctl.lock:
+        n = len(ctl.path)
+        last = ctl.path[-1] if ctl.path else None
+    if n == 0:
+        return jsonify({"message": "no path drawn"})
+    ctl.queue(CMD_PATH_RUN)
+    if last:
+        ctl.set_goal(last, "path end")
+    ctl.status = f"running path, {n} points"
+    return jsonify({"message": f"running path, {n} points"})
+
+@app.route("/api/path/clear", methods=["POST"])
+def path_clear():
+    ctl.clear_path()
+    ctl.clear_goal()
+    ctl.status = "path cleared"
+    return jsonify({"message": "path cleared"})
 
 @app.route("/api/calib/capture", methods=["POST"])
 def calib_capture():

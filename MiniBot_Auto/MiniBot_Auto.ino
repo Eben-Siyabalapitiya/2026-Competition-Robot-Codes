@@ -189,6 +189,12 @@ uint8_t activeTarget = TGT_NONE;
 int     activeRamp   = -1;
 bool    climbingTarget = false;
 
+int16_t pathX[PATH_MAX];
+int16_t pathY[PATH_MAX];
+uint8_t pathCount     = 0;
+uint8_t pathIndex     = 0;
+bool    followingPath = false;
+
 unsigned long holdStartMs  = 0;
 unsigned long matchStartMs = 0;
 bool          matchRunning = false;
@@ -199,6 +205,7 @@ const unsigned long MATCH_LIMIT_MS  = 90000;
 const unsigned long CAPTURE_HOLD_MS = 3000;
 
 const float ARRIVE_TOL_MM     = 40.0f;
+const float WAYPOINT_TOL_MM   = 90.0f;
 const float STAGING_TOL_MM    = 30.0f;
 const float ALIGN_TOL_DEG     = 4.0f;
 const float TURN_IN_PLACE_DEG = 25.0f;
@@ -299,6 +306,7 @@ void AbortToIdle(const char *why) {
   activeRamp = -1;
   climbingTarget = false;
   hasDetour = false;
+  followingPath = false;
   EnterState(ST_IDLE);
 }
 
@@ -309,6 +317,7 @@ void Disable(const char *why) {
   activeRamp = -1;
   climbingTarget = false;
   hasDetour = false;
+  followingPath = false;
   matchRunning = false;
   state = ST_DISABLED;
 }
@@ -332,9 +341,32 @@ void StartGotoXY(int16_t x, int16_t y) {
   activeTarget = TGT_NONE;
   climbingTarget = false;
   activeRamp = -1;
+  followingPath = false;
   SetGoalWithDetour(x, y);
   Serial.printf("GOTO xy %d,%d\n", x, y);
   EnterState(ST_DRIVE);
+}
+
+void StartPathLeg() {
+  activeTarget = TGT_NONE;
+  climbingTarget = false;
+  activeRamp = -1;
+  hasDetour = false;
+  goal.x_mm = pathX[pathIndex];
+  goal.y_mm = pathY[pathIndex];
+  Serial.printf("path leg %u/%u -> %d,%d\n", pathIndex + 1, pathCount, goal.x_mm, goal.y_mm);
+  EnterState(ST_DRIVE);
+}
+
+void StartPathRun() {
+  if (pathCount == 0) {
+    Serial.println("RUN ignored - no path loaded");
+    return;
+  }
+  pathIndex = 0;
+  followingPath = true;
+  Serial.printf("RUN path of %u points\n", pathCount);
+  StartPathLeg();
 }
 
 void StartGotoTarget(uint8_t id) {
@@ -380,6 +412,25 @@ void HandleCommand(const LinkPacket &p) {
       break;
     case CMD_GOTO_TGT:
       if (state != ST_DISABLED) StartGotoTarget(p.targetId);
+      break;
+    case CMD_PATH_CLEAR:
+      pathCount = 0;
+      pathIndex = 0;
+      followingPath = false;
+      Serial.println("path cleared");
+      break;
+    case CMD_PATH_ADD:
+      if (p.targetId == pathCount && pathCount < PATH_MAX) {
+        pathX[pathCount] = p.gx_mm;
+        pathY[pathCount] = p.gy_mm;
+        pathCount++;
+        Serial.printf("path point %u = %d,%d\n", p.targetId, p.gx_mm, p.gy_mm);
+      } else {
+        Serial.printf("path point %u out of order (have %u), ignored\n", p.targetId, pathCount);
+      }
+      break;
+    case CMD_PATH_RUN:
+      if (state != ST_DISABLED) StartPathRun();
       break;
     default:
       break;
@@ -511,15 +562,26 @@ void loop() {
         SetDrive(0, 0);
         break;
       }
+      bool lastLeg = !followingPath || (pathIndex + 1 >= pathCount);
       float dist = DistanceTo(goal.x_mm, goal.y_mm);
-      float tol  = hasDetour ? 80.0f : (climbingTarget ? STAGING_TOL_MM : ARRIVE_TOL_MM);
+      float tol;
+      if (hasDetour)            tol = 80.0f;
+      else if (climbingTarget)  tol = STAGING_TOL_MM;
+      else if (!lastLeg)        tol = WAYPOINT_TOL_MM;
+      else                      tol = ARRIVE_TOL_MM;
 
       if (dist < tol) {
         if (hasDetour) {
           SetGoalWithDetour(finalGoal.x_mm, finalGoal.y_mm);
           break;
         }
+        if (!lastLeg) {
+          pathIndex++;
+          StartPathLeg();
+          break;
+        }
         SetDrive(0, 0);
+        followingPath = false;
         EnterState(climbingTarget ? ST_ALIGN : ST_HOLD);
         break;
       }

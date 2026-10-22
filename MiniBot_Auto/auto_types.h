@@ -48,13 +48,18 @@ struct Obstacle {
 #define LINK_VERSION 1
 
 enum LinkCmd : uint8_t {
-  CMD_NONE     = 0,
-  CMD_GOTO_XY  = 1,
-  CMD_GOTO_TGT = 2,
-  CMD_CANCEL   = 3,
-  CMD_ENABLE   = 4,
-  CMD_DISABLE  = 5,
+  CMD_NONE       = 0,
+  CMD_GOTO_XY    = 1,
+  CMD_GOTO_TGT   = 2,
+  CMD_CANCEL     = 3,
+  CMD_ENABLE     = 4,
+  CMD_DISABLE    = 5,
+  CMD_PATH_CLEAR = 6,
+  CMD_PATH_ADD   = 7,
+  CMD_PATH_RUN   = 8,
 };
+
+#define PATH_MAX 16
 
 #pragma pack(push, 1)
 struct LinkPacket {

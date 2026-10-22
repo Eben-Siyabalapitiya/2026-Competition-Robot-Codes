@@ -161,6 +161,9 @@
         <button class="primary" onclick="enable()">Enable<kbd>space</kbd></button>
         <button class="danger" onclick="disable()">Disable<kbd>D</kbd></button>
         <button onclick="cancelGoal()">Cancel goal<kbd>C</kbd></button>
+        <button id="drawbtn" onclick="toggleDraw()">Draw path<kbd>P</kbd></button>
+        <button class="primary" onclick="runPath()">Run path<kbd>R</kbd></button>
+        <button onclick="clearPath()">Clear path</button>
       </div>
     </div>
 
@@ -232,15 +235,63 @@ function disable() {
 }
 function cancelGoal() { selected = null; markSelected(); post('/api/cancel'); }
 
-document.getElementById('cam').addEventListener('click', (e) => {
-  const img = e.target;
+let drawMode = false;
+let drawing = false;
+let stroke = [];
+
+function camPoint(e) {
+  const img = document.getElementById('cam');
   const r = img.getBoundingClientRect();
-  const x = (e.clientX - r.left) * (img.naturalWidth  / r.width);
-  const y = (e.clientY - r.top)  * (img.naturalHeight / r.height);
+  return {
+    x: (e.clientX - r.left) * (img.naturalWidth  / r.width),
+    y: (e.clientY - r.top)  * (img.naturalHeight / r.height)
+  };
+}
+
+document.getElementById('cam').addEventListener('click', (e) => {
+  if (drawMode) return;
+  const p = camPoint(e);
   selected = null;
   markSelected();
-  post('/api/click', {x: x, y: y});
+  post('/api/click', p);
 });
+
+document.getElementById('cam').addEventListener('pointerdown', (e) => {
+  if (!drawMode) return;
+  e.preventDefault();
+  drawing = true;
+  stroke = [camPoint(e)];
+});
+
+document.getElementById('cam').addEventListener('pointermove', (e) => {
+  if (!drawMode || !drawing) return;
+  const p = camPoint(e);
+  const last = stroke[stroke.length - 1];
+  if (Math.hypot(p.x - last.x, p.y - last.y) > 4) stroke.push(p);
+});
+
+document.getElementById('cam').addEventListener('pointerup', async (e) => {
+  if (!drawMode || !drawing) return;
+  drawing = false;
+  stroke.push(camPoint(e));
+  await post('/api/path', {points: stroke});
+  setDrawMode(false);
+});
+
+function setDrawMode(on) {
+  drawMode = on;
+  drawing = false;
+  const img = document.getElementById('cam');
+  img.style.cursor = on ? 'crosshair' : 'pointer';
+  img.style.outline = on ? '2px solid #ffaa3c' : 'none';
+  const b = document.getElementById('drawbtn');
+  b.textContent = on ? 'Drawing… release to load' : 'Draw path';
+  b.classList.toggle('primary', on);
+}
+
+function toggleDraw() { setDrawMode(!drawMode); }
+function runPath()    { selected = null; markSelected(); post('/api/path/run'); }
+function clearPath()  { setDrawMode(false); post('/api/path/clear'); }
 
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
@@ -248,6 +299,8 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Space') { e.preventDefault(); enable(); }
   else if (k === 'd') disable();
   else if (k === 'c') cancelGoal();
+  else if (k === 'p') toggleDraw();
+  else if (k === 'r') runPath();
   else if (k >= '1' && k <= '6') target(parseInt(k, 10));
 });
 

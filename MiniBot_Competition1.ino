@@ -65,8 +65,8 @@ bool lastVictoryState = false;
 bool victoryActive = false;
 uint8_t victoryHue = 0;
 
-bool lastDpadUp = false, lastDpadDown = false, lastDpadLeft = false, lastDpadRight = false;
-enum DpadEffect { DPAD_NONE, DPAD_SIREN, DPAD_PLASMA };
+bool lastDpadUp = false, lastDpadDown = false, lastDpadLeft = false;
+enum DpadEffect { DPAD_NONE, DPAD_SIREN };
 DpadEffect currentDpadEffect = DPAD_NONE;
 unsigned long dpadEffectStart = 0;
 
@@ -334,19 +334,7 @@ void DpadSiren() {
   }
 }
 
-void DpadPlasma() {
-  unsigned long elapsed = millis() - dpadEffectStart;
-  for (int i = 0; i < NUM_LEDS2; i++) {
-    uint8_t colorIndex = sin8(i * 20 + elapsed / 4) / 2 + sin8(i * 10 - elapsed / 6) / 2;
-    leds2[i] = CHSV(colorIndex, 255, 255);
-  }
-  for (int i = 0; i < LED_COUNT; i++) {
-    uint8_t colorIndex = sin8(i * 60 + elapsed / 4) / 2 + sin8(i * 30 - elapsed / 6) / 2;
-    leds[i] = CHSV(colorIndex, 255, 255);
-  }
-}
-
-void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool victoryPressed, bool dpadLeft, bool dpadRight) {
+void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool dpadLeft, bool dpadRight) {
 
 
   if ((r2Pressed || r1Pressed) && victoryActive) {
@@ -357,10 +345,14 @@ void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool victoryPressed, bo
     currentDpadEffect = DPAD_NONE;
   }
 
+  if (dpadRight && !lastVictoryState && !victoryActive) {
+    victoryActive = true;
+    currentDpadEffect = DPAD_NONE;
+  }
+  lastVictoryState = dpadRight;
+
   if (dpadLeft && !lastDpadLeft) { currentDpadEffect = DPAD_SIREN; dpadEffectStart = millis(); }
-  if (dpadRight && !lastDpadRight) { currentDpadEffect = DPAD_PLASMA; dpadEffectStart = millis(); }
   lastDpadLeft = dpadLeft;
-  lastDpadRight = dpadRight;
 
   if (currentDpadEffect != DPAD_NONE) {
     if (millis() - dpadEffectStart > DPAD_EFFECT_DURATION) {
@@ -368,17 +360,11 @@ void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool victoryPressed, bo
     } else {
       switch (currentDpadEffect) {
         case DPAD_SIREN: DpadSiren(); break;
-        case DPAD_PLASMA: DpadPlasma(); break;
         default: break;
       }
       return;
     }
   }
-
-  if (victoryPressed && !lastVictoryState && !victoryActive) {
-    victoryActive = true;
-  }
-  lastVictoryState = victoryPressed;
 
   if (r2Pressed && !lastR2State) {
     flashing = true;
@@ -583,7 +569,7 @@ void loop() {
     if (now - lastLedUpdate >= LED_INTERVAL_MS) {
       lastLedUpdate = now;
       FastLED.setBrightness(map(ledBrightnessPercent, 0, 100, 0, 255));
-      UpdateExternalStrip(myController->r2(), myController->r1(), myController->b(), dpadLeft, dpadRight);
+      UpdateExternalStrip(myController->r2(), myController->r1(), dpadLeft, dpadRight);
       FastLED.show();
     }
 

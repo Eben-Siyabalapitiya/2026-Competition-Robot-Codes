@@ -62,7 +62,7 @@
   .views { display: flex; align-items: flex-start; }
   .view { position: relative; flex: 1 1 0; min-width: 0; line-height: 0; }
   .mapview { border-left: 1px solid var(--line); background: #0b0d10; }
-  #map { display: block; width: 100%; height: auto; cursor: crosshair; }
+  #map { display: block; width: 100%; height: auto; pointer-events: none; }
   @media (max-width: 860px) { .views { flex-direction: column; } .mapview { border-left: 0; border-top: 1px solid var(--line); } }
 
   .hud {
@@ -561,17 +561,6 @@ function drawMap() {
     g.textAlign = 'start';
   }
 }
-
-document.getElementById('map').addEventListener('click', (e) => {
-  const cm = document.getElementById('map');
-  const r = cm.getBoundingClientRect();
-  const dpr = cm.width / r.width;
-  const fx = ((e.clientX - r.left) * dpr) / mapScale;
-  const fy = ((e.clientY - r.top) * dpr) / mapScale;
-  selected = null;
-  markSelected();
-  post('/api/goto_field', {x: fx, y: fy});
-});
 
 window.addEventListener('resize', fitMap);
 setTimeout(fitMap, 50);

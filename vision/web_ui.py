@@ -311,16 +311,6 @@ def state():
         "field": [FIELD_X_MM, FIELD_Y_MM],
     })
 
-@app.route("/api/goto_field", methods=["POST"])
-def goto_field():
-    fx = float(request.json["x"])
-    fy = float(request.json["y"])
-    if not (0 <= fx <= FIELD_X_MM and 0 <= fy <= FIELD_Y_MM):
-        return jsonify({"message": "that point is off the field"})
-    ctl.set_goal((fx, fy), f"{fx:.0f},{fy:.0f}")
-    ctl.status = f"driving to {fx:.0f},{fy:.0f}"
-    ctl.queue(CMD_GOTO_XY, gx=int(round(fx)), gy=int(round(fy)))
-    return jsonify({"message": f"going to {fx:.0f},{fy:.0f}"})
 
 @app.route("/api/enable", methods=["POST"])
 def enable():

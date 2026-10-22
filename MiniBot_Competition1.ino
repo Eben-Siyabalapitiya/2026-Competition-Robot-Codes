@@ -3,10 +3,70 @@
 #include <ESP32Servo.h>
 #include <FastLED.h>
 
-int servoAngle = 90;
-int supportAngle = 0;
+// ===========================================================================
+//                        TUNING - EDIT EVERYTHING HERE
+// ===========================================================================
+//  all the numbers you actually want to mess with live in this block.
+//  nothing below this section needs touching for normal tuning.
+// ---------------------------------------------------------------------------
+
+// ---- DRIVE FEEL ----
+const float DRIVE_SCALE = 0.4;    // right stick. lower = slower. 1.0 is full send
+const float TURN_SCALE  = 1.0;    // left stick. lower = calmer turning
+const int   DEADBAND    = 50;     // stick slop before anything moves (0-512)
+
+// ---- SMOOTHNESS / MOTOR PROTECTION ----
+// slew is per SECOND, not per loop, so changing loop speed wont change the feel.
+// higher = snappier. 1000 = full 0-180 swing in about 180ms.
+// lower this if the motors feel like theyre straining.
+const float SLEW_RATE_PER_SEC = 1000.0;
+
+// tiny pause at neutral before flipping direction, this is what saves the gearboxes.
+// raise it if direction changes sound rough. 0 = no protection at all.
+const unsigned long REVERSE_DWELL_MS = 40;
+
+// ---- LOOP SPEED (this replaced the old delay(20)) ----
+const unsigned long CONTROL_INTERVAL_MS = 5;    // 200hz motor + servo update
+const unsigned long LED_INTERVAL_MS     = 20;   // 50hz led refresh
+const unsigned long BATT_SAMPLE_MS      = 100;  // battery check rate
+
+// ---- ARM SERVOS 7 + 8 ----
+const int ARM_R1_ANGLE = 0;     // where it goes holding R1
+const int ARM_R2_ANGLE = 70;    // where it goes holding R2 / L2
+const int REST_BASE    = 124;   // resting "zero", what it returns to on release
+
+// dpad up/down nudge the rest spot live. ram only, power cycle resets it to REST_BASE.
+const int REST_TRIM_STEP = 5;   // degrees per dpad press
+const int REST_TRIM_MIN  = -40; // how far down you can trim it
+const int REST_TRIM_MAX  = 40;  // how far up you can trim it
+
+// ---- SUPPORT SERVOS 9 + 10 ----
 const int SUPPORT_ZERO = 0;
 const int SUPPORT_MAX  = 150;
+
+// ---- SERVO TRIMS (mechanical alignment, per servo) ----
+const int TRIM_7  = -7;
+const int TRIM_8  = 0;
+const int TRIM_9  = 0;
+const int TRIM_10 = 0;
+
+// ---- LIGHTS ----
+#define BRIGHTNESS 255                             // master cap. drop this if you brown out
+const int flashInterval = 50;                      // R1/R2 flash blink rate
+const int flashDurationCycles = 10;                // how long the flash lasts
+int snakeSpeed = 35;                               // idle snake speed
+const unsigned long DPAD_EFFECT_DURATION = 8000;   // dpad left/right effect runtime
+
+// ---- BATTERY ----
+const float BATT_WARN_V = 7.2;  // when it turns red just swap battery
+
+// ===========================================================================
+//                    below here is wiring + logic, leave it
+// ===========================================================================
+
+int servoAngle = 90;
+int supportAngle = 0;
+int restTrim = 0;
 
 #define LED_PIN2 22
 #define NUM_LEDS2 18
@@ -15,15 +75,12 @@ CRGB leds2[NUM_LEDS2];
 int snakePos = 0;
 int snakeDirection = 1;
 unsigned long lastSnakeMove = 0;
-int snakeSpeed = 35; //speed of the snake led
 const int SNAKE_LEN = 3;
 
 bool flashing = false;
 unsigned long flashStart = 0;
-const int flashInterval = 50;
-const int flashDurationCycles = 10; // 4 full on and off and it flashes
 
-enum FlashColor { FLASH_NONE, FLASH_GREEN, FLASH_RED };
+enum FlashColor { FLASH_NONE, FLASH_WHITE, FLASH_RED };
 FlashColor currentFlashColor = FLASH_NONE;
 
 bool lastR2State = false;
@@ -34,23 +91,14 @@ bool victoryActive = false;
 uint8_t victoryHue = 0;
 
 bool lastDpadUp = false, lastDpadDown = false, lastDpadLeft = false, lastDpadRight = false;
-enum DpadEffect { DPAD_NONE, DPAD_TWINKLE, DPAD_LIGHTNING, DPAD_SIREN, DPAD_PLASMA };
+enum DpadEffect { DPAD_NONE, DPAD_SIREN, DPAD_PLASMA };
 DpadEffect currentDpadEffect = DPAD_NONE;
 unsigned long dpadEffectStart = 0;
-const unsigned long DPAD_EFFECT_DURATION = 8000; // time for the random buttons
 
-// BATTERY MONITORING does not affect power or performance
 float battVoltage = 0;
 bool batteryWarn = false;
-const float BATT_WARN_V = 7.2; // when it turns red just swap battery
 
-const int TRIM_7 = -7;  // servo angle 
-const int TRIM_8 = 0;
-
-const int TRIM_9 = 0;
-const int TRIM_10 = 0;
-
-int ledBrightnessPercent = 100; 
+int ledBrightnessPercent = 100;
 bool lastBState = false;
 bool lastAState = false;
 
@@ -69,10 +117,8 @@ const uint8_t IO_PINS[13] = { 0, 32, 25, 26, 27, 14, 12, 13, 15, 2, 4, 22, 21 };
 
 #define LED_PIN 33
 #define LED_COUNT 4
-#define BRIGHTNESS 255
 #define COLOR_ORDER GRB
 #define CHIPSET WS2812B
-
 
 CRGB leds[LED_COUNT];
 uint8_t rainbowHue = 0;
@@ -80,26 +126,26 @@ uint8_t rainbowHue = 0;
 #define WDT_TIMEOUT 3
 Servo MotorOutput[13];
 
-// Drive smooth 
 float currentLeftOut = 90;
 float currentRightOut = 90;
 
-const float SLEW_RATE = 25; 
-
 unsigned long leftReverseDwell = 0;
 unsigned long rightReverseDwell = 0;
-const unsigned long REVERSE_DWELL_MS = 100; // time to hold at neutral before reversing
 
-void SlewMove(float &current, float target) {
+unsigned long lastControlUpdate = 0;
+unsigned long lastLedUpdate = 0;
+unsigned long lastBattSample = 0;
+
+void SlewMove(float &current, float target, float maxStep) {
 
   if (current < target) {
-    current += SLEW_RATE;
+    current += maxStep;
     if (current > target)
       current = target;
   }
 
   else if (current > target) {
-    current -= SLEW_RATE;
+    current -= maxStep;
     if (current < target)
       current = target;
   }
@@ -141,7 +187,6 @@ void onConnectedController(ControllerPtr ctl) {
 
     fill_solid(leds, LED_COUNT, CRGB(0, 255, 0));
     FastLED.show();
-    delay(500);
 
   } else {
     Serial.println("Another controller tried to connect but is rejected");
@@ -155,13 +200,12 @@ void onDisconnectedController(ControllerPtr ctl) {
 
     fill_solid(leds, LED_COUNT, CRGB(255, 0, 0));
     FastLED.show();
-    delay(1000);
   }
 }
 
 static unsigned long lastBatteryUpdate = 0;
-void GamePad_BatteryMonitor() {
-  if (millis() - lastBatteryUpdate > 1000) {
+void GamePad_BatteryMonitor(unsigned long now) {
+  if (now - lastBatteryUpdate > 1000) {
     int battery = myController->battery();
     if (battery == 0) {
       myController->setColorLED(255, 0, 0);
@@ -172,17 +216,13 @@ void GamePad_BatteryMonitor() {
 
       myController->playDualRumble(0x00, 0xc0, 0xc0, 0xc0);
 
-      fill_solid(leds, LED_COUNT, CRGB(255, 0, 0));
-      FastLED.show();
-      delay(100);
-
     } else if (battery <= 128) {
       myController->setColorLED(255, 255, 0);
 
     } else {
       myController->setColorLED(0, 255, 0);
     }
-    lastBatteryUpdate = millis();
+    lastBatteryUpdate = now;
   }
 }
 
@@ -266,9 +306,9 @@ MotorTypeConfig motorTypeConfigs[] = {
   { MG90_Degree, 50, 500, 2500, 1, 180 },
   { N20Plus, 50, 800, 2200, -1, 1 },
   { Victor_SPX, 50, 1000, 2000, -1, 1 },
-  { Talon_SRX, 50, 1000, 2000 - 1, 1 },
-  { STD_SERVO, 50, 1000, 2000 - 1, 1 },
-  { SPARK_MAX, 50, 1000, 2000 - 1, 1 },
+  { Talon_SRX, 50, 1000, 2000, -1, 1 },
+  { STD_SERVO, 50, 1000, 2000, -1, 1 },
+  { SPARK_MAX, 50, 1000, 2000, -1, 1 },
 };
 
 void ConfigureMotorOutput(uint8_t slot, MotorType motorType, int startupPositionDeg = 90) {
@@ -298,27 +338,6 @@ void ConfigureMotorOutput(uint8_t slot, MotorType motorType, int startupPosition
 
   }
 
-void DpadTwinkle() {
-  fadeToBlackBy(leds2, NUM_LEDS2, 40);
-  fadeToBlackBy(leds, LED_COUNT, 40);
-  if (random8() < 60) {
-    leds2[random16(NUM_LEDS2)] = CHSV(160, 90, 255);
-  }
-  if (random8() < 90) {
-    leds[random16(LED_COUNT)] = CHSV(160, 90, 255);
-  }
-}
-
-void DpadLightning() {
-  if (random8() < 15) {
-    fill_solid(leds2, NUM_LEDS2, CRGB::White);
-    fill_solid(leds, LED_COUNT, CRGB::White);
-  } else {
-    fadeToBlackBy(leds2, NUM_LEDS2, 80);
-    fadeToBlackBy(leds, LED_COUNT, 80);
-  }
-}
-
 void DpadSiren() {
   unsigned long elapsed = millis() - dpadEffectStart;
   bool redSide = (elapsed / 150) % 2 == 0;
@@ -344,7 +363,7 @@ void DpadPlasma() {
   }
 }
 
-void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool trianglePressed, bool reversing, bool dpadUp, bool dpadDown, bool dpadLeft, bool dpadRight) {
+void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool trianglePressed, bool dpadLeft, bool dpadRight) {
 
 
   if ((r2Pressed || r1Pressed) && victoryActive) {
@@ -355,12 +374,8 @@ void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool trianglePressed, b
     currentDpadEffect = DPAD_NONE;
   }
 
-  if (dpadUp && !lastDpadUp) { currentDpadEffect = DPAD_TWINKLE; dpadEffectStart = millis(); }
-  if (dpadDown && !lastDpadDown) { currentDpadEffect = DPAD_LIGHTNING; dpadEffectStart = millis(); }
   if (dpadLeft && !lastDpadLeft) { currentDpadEffect = DPAD_SIREN; dpadEffectStart = millis(); }
   if (dpadRight && !lastDpadRight) { currentDpadEffect = DPAD_PLASMA; dpadEffectStart = millis(); }
-  lastDpadUp = dpadUp;
-  lastDpadDown = dpadDown;
   lastDpadLeft = dpadLeft;
   lastDpadRight = dpadRight;
 
@@ -369,8 +384,6 @@ void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool trianglePressed, b
       currentDpadEffect = DPAD_NONE;
     } else {
       switch (currentDpadEffect) {
-        case DPAD_TWINKLE: DpadTwinkle(); break;
-        case DPAD_LIGHTNING: DpadLightning(); break;
         case DPAD_SIREN: DpadSiren(); break;
         case DPAD_PLASMA: DpadPlasma(); break;
         default: break;
@@ -387,7 +400,7 @@ void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool trianglePressed, b
   if (r2Pressed && !lastR2State) {
     flashing = true;
     flashStart = millis();
-    currentFlashColor = FLASH_GREEN;
+    currentFlashColor = FLASH_WHITE;
   }
   if (r1Pressed && !lastR1State) {
     flashing = true;
@@ -409,18 +422,11 @@ void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool trianglePressed, b
     return;
   }
 
-  if (reversing) {
-    bool on = (millis() / flashInterval) % 2 == 0;
-    fill_solid(leds2, NUM_LEDS2, on ? CRGB::White : CRGB::Black);
-    fill_solid(leds, LED_COUNT, on ? CRGB::White : CRGB::Black);
-    return;
-  }
-
   if (flashing) {
     unsigned long elapsed = millis() - flashStart;
     if (elapsed < flashInterval * flashDurationCycles) {
       bool on = (elapsed / flashInterval) % 2 == 0;
-      CRGB color = (currentFlashColor == FLASH_RED) ? CRGB::Red : CRGB::Green;
+      CRGB color = (currentFlashColor == FLASH_RED) ? CRGB::Red : CRGB::White;
       fill_solid(leds2, NUM_LEDS2, on ? color : CRGB::Black);
       fill_solid(leds, LED_COUNT, on ? color : CRGB::Black);
     } else {
@@ -453,7 +459,7 @@ void INIT_LoRcore() {
   INIT_BluetoothGamepad_PairMode();
 }
 
-//SETUP 
+//SETUP
 void setup() {
   INIT_LoRcore();
 
@@ -474,116 +480,142 @@ void setup() {
   ConfigureMotorOutput(8, MG90_Degree); //back left
 
   //support thing
-  ConfigureMotorOutput(9, MG90_Degree); //front right 
+  ConfigureMotorOutput(9, MG90_Degree); //front right
   ConfigureMotorOutput(10, MG90_Degree); //front left
 
-  // left over one 
+  // left over one
   ConfigureMotorOutput(12, N20Plus);
 
   Serial.println("LoRcore V3 System Ready! ");
 }
 
-//servo setup stuff 
+//servo setup stuff
 
 void loop() {
   esp_task_wdt_reset();
   BP32.update();
 
-  battVoltage = (analogRead(VIN_SENSE) * VOLT_SLOPE) + VOLT_OFFSET;
-  batteryWarn = battVoltage < BATT_WARN_V;
+  unsigned long now = millis();
+
+  if (now - lastBattSample >= BATT_SAMPLE_MS) {
+    battVoltage = (analogRead(VIN_SENSE) * VOLT_SLOPE) + VOLT_OFFSET;
+    batteryWarn = battVoltage < BATT_WARN_V;
+    lastBattSample = now;
+  }
 
   if (myController && myController->isConnected()) {
 
-    if (myController->r1()) {
-      servoAngle = 0;
-    } else if (myController->r2() || myController->l2()) {
-      servoAngle = 70;
-    } else {
-      servoAngle = 124;
+    uint8_t dpad = myController->dpad();
+    bool dpadUp    = dpad & DPAD_UP;
+    bool dpadDown  = dpad & DPAD_DOWN;
+    bool dpadLeft  = dpad & DPAD_LEFT;
+    bool dpadRight = dpad & DPAD_RIGHT;
+
+    // dpad up/down trim where servo 7 and 8 sit at rest, 5 deg a press.
+    // resets on power cycle so you set it fresh every time.
+    if (dpadUp && !lastDpadUp) {
+      restTrim = constrain(restTrim + REST_TRIM_STEP, REST_TRIM_MIN, REST_TRIM_MAX);
+      Serial.printf("rest trim: %d\n", restTrim);
     }
-    MotorOutput[7].write(constrain(servoAngle + TRIM_7, 0, 180));
-    MotorOutput[8].write(constrain((180 - servoAngle) + TRIM_8, 0, 180));
-
-    if (myController->r2() || myController->l1()) {
-      supportAngle = SUPPORT_MAX;
-    } else {
-      supportAngle = SUPPORT_ZERO;
+    if (dpadDown && !lastDpadDown) {
+      restTrim = constrain(restTrim - REST_TRIM_STEP, REST_TRIM_MIN, REST_TRIM_MAX);
+      Serial.printf("rest trim: %d\n", restTrim);
     }
-    MotorOutput[9].write(constrain((180 - supportAngle) + TRIM_9, 0, 180));
-    MotorOutput[10].write(constrain(supportAngle + TRIM_10, 0, 180));
+    lastDpadUp = dpadUp;
+    lastDpadDown = dpadDown;
 
+    bool bPressed = myController->b();
+    bool aPressed = myController->a();
 
-  bool bPressed = myController->b(); 
-  bool aPressed = myController->a(); 
+    if (bPressed && !lastBState) {
+      ledBrightnessPercent = min(100, ledBrightnessPercent + 20);
+    }
+    if (aPressed && !lastAState) {
+      ledBrightnessPercent = max(0, ledBrightnessPercent - 20);
+    }
+    lastBState = bPressed;
+    lastAState = aPressed;
 
-  if (bPressed && !lastBState) {
-    ledBrightnessPercent = min(100, ledBrightnessPercent + 20);
-  }
-  if (aPressed && !lastAState) {
-    ledBrightnessPercent = max(0, ledBrightnessPercent - 20);
-  }
-  lastBState = bPressed;
-  lastAState = aPressed;
+    if (now - lastControlUpdate >= CONTROL_INTERVAL_MS) {
+      float dt = (now - lastControlUpdate) / 1000.0f;
+      lastControlUpdate = now;
+      float maxStep = SLEW_RATE_PER_SEC * dt;
 
-  FastLED.setBrightness(map(ledBrightnessPercent, 0, 100, 0, 255));
+      if (myController->r1()) {
+        servoAngle = ARM_R1_ANGLE;
+      } else if (myController->r2() || myController->l2()) {
+        servoAngle = ARM_R2_ANGLE;
+      } else {
+        servoAngle = constrain(REST_BASE + restTrim, 0, 180);
+      }
+      MotorOutput[7].write(constrain(servoAngle + TRIM_7, 0, 180));
+      MotorOutput[8].write(constrain((180 - servoAngle) + TRIM_8, 0, 180));
 
-  
-int moveValue = myController->axisRX()* 0.8;
-int turnValue = -myController->axisY();
+      if (myController->r2() || myController->l1()) {
+        supportAngle = SUPPORT_MAX;
+      } else {
+        supportAngle = SUPPORT_ZERO;
+      }
+      MotorOutput[9].write(constrain((180 - supportAngle) + TRIM_9, 0, 180));
+      MotorOutput[10].write(constrain(supportAngle + TRIM_10, 0, 180));
 
-int left = moveValue + turnValue;
-int right = moveValue - turnValue;
+      int moveValue = myController->axisRX() * DRIVE_SCALE;
+      int turnValue = -myController->axisY() * TURN_SCALE;
 
-if (abs(left) < 50) left = 0;
-if (abs(right) < 50) right = 0;
+      int left = moveValue + turnValue;
+      int right = moveValue - turnValue;
 
-// negated both sides, motors run backwards after the side swap
-int MappedLeft = constrain(map(-left, -512, 512, 0, 180), 0, 180);
-int MappedRight = constrain(map(-right, -512, 512, 0, 180), 0, 180);
+      if (abs(left) < DEADBAND) left = 0;
+      if (abs(right) < DEADBAND) right = 0;
 
+      // negated both sides, motors run backwards after the side swap
+      int MappedLeft = constrain(map(-left, -512, 512, 0, 180), 0, 180);
+      int MappedRight = constrain(map(-right, -512, 512, 0, 180), 0, 180);
 
-// SLEW RATE SSTUFF (FULL FIX IS HERE)
-bool leftReversing = (currentLeftOut > 90 && MappedLeft < 90) || (currentLeftOut < 90 && MappedLeft > 90);
-bool rightReversing = (currentRightOut > 90 && MappedRight < 90) || (currentRightOut < 90 && MappedRight > 90);
+      bool leftReversing = (currentLeftOut > 90 && MappedLeft < 90) || (currentLeftOut < 90 && MappedLeft > 90);
+      bool rightReversing = (currentRightOut > 90 && MappedRight < 90) || (currentRightOut < 90 && MappedRight > 90);
 
-if (leftReversing) {
-  currentLeftOut = 90;
-  leftReverseDwell = millis();
-} else if (millis() - leftReverseDwell > REVERSE_DWELL_MS) {
-  SlewMove(currentLeftOut, MappedLeft);
-}
+      if (leftReversing) {
+        currentLeftOut = 90;
+        leftReverseDwell = now;
+      } else if (now - leftReverseDwell > REVERSE_DWELL_MS) {
+        SlewMove(currentLeftOut, MappedLeft, maxStep);
+      }
 
-if (rightReversing) {
-  currentRightOut = 90;
-  rightReverseDwell = millis();
-} else if (millis() - rightReverseDwell > REVERSE_DWELL_MS) {
-  SlewMove(currentRightOut, MappedRight);
-}
+      if (rightReversing) {
+        currentRightOut = 90;
+        rightReverseDwell = now;
+      } else if (now - rightReverseDwell > REVERSE_DWELL_MS) {
+        SlewMove(currentRightOut, MappedRight, maxStep);
+      }
 
+      MotorOutput[1].write(currentRightOut);
+      MotorOutput[2].write(currentRightOut);
+      MotorOutput[3].write(currentRightOut);
 
-    MotorOutput[1].write(currentRightOut);
-    MotorOutput[2].write(currentRightOut);
-    MotorOutput[3].write(currentRightOut);
+      MotorOutput[4].write(currentLeftOut);
+      MotorOutput[5].write(currentLeftOut);
+      MotorOutput[6].write(currentLeftOut);
 
-    MotorOutput[4].write(currentLeftOut);
-    MotorOutput[5].write(currentLeftOut);
-    MotorOutput[6].write(currentLeftOut);
+      GamePad_BatteryMonitor(now);
+    }
 
-    GamePad_BatteryMonitor();
+    if (now - lastLedUpdate >= LED_INTERVAL_MS) {
+      lastLedUpdate = now;
+      FastLED.setBrightness(map(ledBrightnessPercent, 0, 100, 0, 255));
+      UpdateExternalStrip(myController->r2(), myController->r1(), myController->y(), dpadLeft, dpadRight);
+      FastLED.show();
+    }
 
-    bool reversing = turnValue < -50;
-
-UpdateExternalStrip(myController->r2(), myController->r1(), myController->y(), reversing,
-                         myController->dpad() & DPAD_UP,
-                         myController->dpad() & DPAD_DOWN,
-                         myController->dpad() & DPAD_LEFT,
-                         myController->dpad() & DPAD_RIGHT);
-
-    FastLED.show();
-    delay(20);
   } else {
     for (int i = 1; i <= 12; i++) MotorOutput[i].write(90);
-    fill_solid(leds, LED_COUNT, CRGB(0, 80, 255));
-    FastLED.show();
+    currentLeftOut = 90;
+    currentRightOut = 90;
+
+    if (now - lastLedUpdate >= LED_INTERVAL_MS) {
+      lastLedUpdate = now;
+      fill_solid(leds, LED_COUNT, CRGB(0, 80, 255));
+      FastLED.show();
+    }
   }
 }

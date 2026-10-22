@@ -19,7 +19,7 @@ const int ARM_R1_ANGLE = 0;
 const int ARM_R2_ANGLE = 70;
 const int REST_BASE    = 115;
 
-const int REST_TRIM_STEP = 5;
+const int REST_TRIM_STEP = 2;
 const int REST_TRIM_MIN  = -40;
 const int REST_TRIM_MAX  = 40;
 
@@ -60,7 +60,7 @@ FlashColor currentFlashColor = FLASH_NONE;
 
 bool lastR2State = false;
 bool lastR1State = false;
-bool lastTriangleState = false;
+bool lastVictoryState = false;
 
 bool victoryActive = false;
 uint8_t victoryHue = 0;
@@ -74,7 +74,7 @@ float battVoltage = 0;
 bool batteryWarn = false;
 
 int ledBrightnessPercent = 100;
-bool lastBState = false;
+bool lastYState = false;
 bool lastAState = false;
 
 const uint8_t AUX_PINS[9] = { 0, 5, 18, 23, 19, 22, 21, 1, 3 };
@@ -346,7 +346,7 @@ void DpadPlasma() {
   }
 }
 
-void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool trianglePressed, bool dpadLeft, bool dpadRight) {
+void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool victoryPressed, bool dpadLeft, bool dpadRight) {
 
 
   if ((r2Pressed || r1Pressed) && victoryActive) {
@@ -375,10 +375,10 @@ void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool trianglePressed, b
     }
   }
 
-  if (trianglePressed && !lastTriangleState && !victoryActive) {
+  if (victoryPressed && !lastVictoryState && !victoryActive) {
     victoryActive = true;
   }
-  lastTriangleState = trianglePressed;
+  lastVictoryState = victoryPressed;
 
   if (r2Pressed && !lastR2State) {
     flashing = true;
@@ -492,26 +492,26 @@ void loop() {
     bool dpadRight = dpad & DPAD_RIGHT;
 
     if (dpadUp && !lastDpadUp) {
-      restTrim = constrain(restTrim + REST_TRIM_STEP, REST_TRIM_MIN, REST_TRIM_MAX);
+      restTrim = constrain(restTrim - REST_TRIM_STEP, REST_TRIM_MIN, REST_TRIM_MAX);
       Serial.printf("rest trim: %d\n", restTrim);
     }
     if (dpadDown && !lastDpadDown) {
-      restTrim = constrain(restTrim - REST_TRIM_STEP, REST_TRIM_MIN, REST_TRIM_MAX);
+      restTrim = constrain(restTrim + REST_TRIM_STEP, REST_TRIM_MIN, REST_TRIM_MAX);
       Serial.printf("rest trim: %d\n", restTrim);
     }
     lastDpadUp = dpadUp;
     lastDpadDown = dpadDown;
 
-    bool bPressed = myController->b();
+    bool yPressed = myController->y();
     bool aPressed = myController->a();
 
-    if (bPressed && !lastBState) {
+    if (yPressed && !lastYState) {
       ledBrightnessPercent = min(100, ledBrightnessPercent + 20);
     }
     if (aPressed && !lastAState) {
       ledBrightnessPercent = max(0, ledBrightnessPercent - 20);
     }
-    lastBState = bPressed;
+    lastYState = yPressed;
     lastAState = aPressed;
 
     if (now - lastControlUpdate >= CONTROL_INTERVAL_MS) {
@@ -583,7 +583,7 @@ void loop() {
     if (now - lastLedUpdate >= LED_INTERVAL_MS) {
       lastLedUpdate = now;
       FastLED.setBrightness(map(ledBrightnessPercent, 0, 100, 0, 255));
-      UpdateExternalStrip(myController->r2(), myController->r1(), myController->y(), dpadLeft, dpadRight);
+      UpdateExternalStrip(myController->r2(), myController->r1(), myController->b(), dpadLeft, dpadRight);
       FastLED.show();
     }
 

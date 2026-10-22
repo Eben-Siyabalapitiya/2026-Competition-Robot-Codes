@@ -3,66 +3,41 @@
 #include <ESP32Servo.h>
 #include <FastLED.h>
 
-// ===========================================================================
-//                        TUNING - EDIT EVERYTHING HERE
-// ===========================================================================
-//  all the numbers you actually want to mess with live in this block.
-//  nothing below this section needs touching for normal tuning.
-// ---------------------------------------------------------------------------
+const float DRIVE_SCALE = 0.35;
+const float TURN_SCALE  = 1.0;
+const int   DEADBAND    = 50;
 
-// ---- DRIVE FEEL ----
-const float DRIVE_SCALE = 0.4;    // right stick. lower = slower. 1.0 is full send
-const float TURN_SCALE  = 1.0;    // left stick. lower = calmer turning
-const int   DEADBAND    = 50;     // stick slop before anything moves (0-512)
-
-// ---- SMOOTHNESS / MOTOR PROTECTION ----
-// slew is per SECOND, not per loop, so changing loop speed wont change the feel.
-// higher = snappier. 1000 = full 0-180 swing in about 180ms.
-// lower this if the motors feel like theyre straining.
 const float SLEW_RATE_PER_SEC = 1000.0;
-
-// tiny pause at neutral before flipping direction, this is what saves the gearboxes.
-// raise it if direction changes sound rough. 0 = no protection at all.
 const unsigned long REVERSE_DWELL_MS = 40;
 
-// ---- LOOP SPEED (this replaced the old delay(20)) ----
-const unsigned long CONTROL_INTERVAL_MS = 5;    // 200hz motor + servo update
-const unsigned long LED_INTERVAL_MS     = 20;   // 50hz led refresh
-const unsigned long BATT_SAMPLE_MS      = 100;  // battery check rate
+const unsigned long CONTROL_INTERVAL_MS = 5;
+const unsigned long LED_INTERVAL_MS     = 20;
+const unsigned long BATT_SAMPLE_MS      = 100;
+const unsigned long CONTROL_TIMEOUT_MS  = 300;
 
-// ---- ARM SERVOS 7 + 8 ----
-const int ARM_R1_ANGLE = 0;     // where it goes holding R1
-const int ARM_R2_ANGLE = 70;    // where it goes holding R2 / L2
-const int REST_BASE    = 124;   // resting "zero", what it returns to on release
+const int ARM_R1_ANGLE = 0;
+const int ARM_R2_ANGLE = 70;
+const int REST_BASE    = 115;
 
-// dpad up/down nudge the rest spot live. ram only, power cycle resets it to REST_BASE.
-const int REST_TRIM_STEP = 5;   // degrees per dpad press
-const int REST_TRIM_MIN  = -40; // how far down you can trim it
-const int REST_TRIM_MAX  = 40;  // how far up you can trim it
+const int REST_TRIM_STEP = 5;
+const int REST_TRIM_MIN  = -40;
+const int REST_TRIM_MAX  = 40;
 
-// ---- SUPPORT SERVOS 9 + 10 ----
 const int SUPPORT_ZERO = 0;
 const int SUPPORT_MAX  = 150;
 
-// ---- SERVO TRIMS (mechanical alignment, per servo) ----
 const int TRIM_7  = -7;
 const int TRIM_8  = 0;
 const int TRIM_9  = 0;
 const int TRIM_10 = 0;
 
-// ---- LIGHTS ----
-#define BRIGHTNESS 255                             // master cap. drop this if you brown out
-const int flashInterval = 50;                      // R1/R2 flash blink rate
-const int flashDurationCycles = 10;                // how long the flash lasts
-int snakeSpeed = 35;                               // idle snake speed
-const unsigned long DPAD_EFFECT_DURATION = 8000;   // dpad left/right effect runtime
+#define BRIGHTNESS 120
+const int flashInterval = 50;
+const int flashDurationCycles = 10;
+int snakeSpeed = 35;
+const unsigned long DPAD_EFFECT_DURATION = 8000;
 
-// ---- BATTERY ----
-const float BATT_WARN_V = 7.2;  // when it turns red just swap battery
-
-// ===========================================================================
-//                    below here is wiring + logic, leave it
-// ===========================================================================
+const float BATT_WARN_V = 7.2;
 
 int servoAngle = 90;
 int supportAngle = 0;
@@ -135,6 +110,7 @@ unsigned long rightReverseDwell = 0;
 unsigned long lastControlUpdate = 0;
 unsigned long lastLedUpdate = 0;
 unsigned long lastBattSample = 0;
+unsigned long lastGoodPacket = 0;
 
 void SlewMove(float &current, float target, float maxStep) {
 
@@ -150,6 +126,12 @@ void SlewMove(float &current, float target, float maxStep) {
       current = target;
   }
 
+}
+
+void NeutralAllMotors() {
+  for (int i = 1; i <= 12; i++) MotorOutput[i].write(90);
+  currentLeftOut = 90;
+  currentRightOut = 90;
 }
 
 void INIT_InternalFeatures() {
@@ -179,6 +161,7 @@ void onConnectedController(ControllerPtr ctl) {
   if (myController == nullptr) {
     Serial.println("! GamePad connected !");
     myController = ctl;
+    lastGoodPacket = millis();
 
     ctl->playDualRumble(0x00, 0xc0, 0xc0, 0xc0);
     ctl->setColorLED(0, 255, 0);
@@ -411,7 +394,6 @@ void UpdateExternalStrip(bool r2Pressed, bool r1Pressed, bool trianglePressed, b
   lastR1State = r1Pressed;
 
   if (victoryActive) {
-    // rainbow chase remb to change it later
     fill_rainbow(leds2, NUM_LEDS2, victoryHue, 12);
     fill_rainbow(leds, LED_COUNT, victoryHue, 40);
     victoryHue += 4;
@@ -459,37 +441,29 @@ void INIT_LoRcore() {
   INIT_BluetoothGamepad_PairMode();
 }
 
-//SETUP
 void setup() {
   INIT_LoRcore();
 
   Serial.println("Motors Startup");
 
-  // Right Drive
-  ConfigureMotorOutput(1, N20Plus); // RF
-  ConfigureMotorOutput(2, N20Plus); // RM
-  ConfigureMotorOutput(3, N20Plus); // RB
+  ConfigureMotorOutput(1, N20Plus);
+  ConfigureMotorOutput(2, N20Plus);
+  ConfigureMotorOutput(3, N20Plus);
 
-  // Left Drive
-  ConfigureMotorOutput(4, N20Plus); // LF
-  ConfigureMotorOutput(5, N20Plus); // LM
-  ConfigureMotorOutput(6, N20Plus); // LB
+  ConfigureMotorOutput(4, N20Plus);
+  ConfigureMotorOutput(5, N20Plus);
+  ConfigureMotorOutput(6, N20Plus);
 
-  // arm
-  ConfigureMotorOutput(7, MG90_Degree);// back right
-  ConfigureMotorOutput(8, MG90_Degree); //back left
+  ConfigureMotorOutput(7, MG90_Degree);
+  ConfigureMotorOutput(8, MG90_Degree);
 
-  //support thing
-  ConfigureMotorOutput(9, MG90_Degree); //front right
-  ConfigureMotorOutput(10, MG90_Degree); //front left
+  ConfigureMotorOutput(9, MG90_Degree);
+  ConfigureMotorOutput(10, MG90_Degree);
 
-  // left over one
   ConfigureMotorOutput(12, N20Plus);
 
   Serial.println("LoRcore V3 System Ready! ");
 }
-
-//servo setup stuff
 
 void loop() {
   esp_task_wdt_reset();
@@ -503,7 +477,13 @@ void loop() {
     lastBattSample = now;
   }
 
-  if (myController && myController->isConnected()) {
+  bool connected = myController && myController->isConnected();
+  if (connected && myController->hasData()) {
+    lastGoodPacket = now;
+  }
+  bool linkAlive = connected && (now - lastGoodPacket) < CONTROL_TIMEOUT_MS;
+
+  if (linkAlive) {
 
     uint8_t dpad = myController->dpad();
     bool dpadUp    = dpad & DPAD_UP;
@@ -511,8 +491,6 @@ void loop() {
     bool dpadLeft  = dpad & DPAD_LEFT;
     bool dpadRight = dpad & DPAD_RIGHT;
 
-    // dpad up/down trim where servo 7 and 8 sit at rest, 5 deg a press.
-    // resets on power cycle so you set it fresh every time.
     if (dpadUp && !lastDpadUp) {
       restTrim = constrain(restTrim + REST_TRIM_STEP, REST_TRIM_MIN, REST_TRIM_MAX);
       Serial.printf("rest trim: %d\n", restTrim);
@@ -559,16 +537,18 @@ void loop() {
       MotorOutput[9].write(constrain((180 - supportAngle) + TRIM_9, 0, 180));
       MotorOutput[10].write(constrain(supportAngle + TRIM_10, 0, 180));
 
-      int moveValue = myController->axisRX() * DRIVE_SCALE;
-      int turnValue = -myController->axisY() * TURN_SCALE;
+      int rawDrive = myController->axisRX();
+      int rawTurn  = -myController->axisY();
+
+      if (abs(rawDrive) < DEADBAND) rawDrive = 0;
+      if (abs(rawTurn) < DEADBAND) rawTurn = 0;
+
+      int moveValue = rawDrive * DRIVE_SCALE;
+      int turnValue = rawTurn * TURN_SCALE;
 
       int left = moveValue + turnValue;
       int right = moveValue - turnValue;
 
-      if (abs(left) < DEADBAND) left = 0;
-      if (abs(right) < DEADBAND) right = 0;
-
-      // negated both sides, motors run backwards after the side swap
       int MappedLeft = constrain(map(-left, -512, 512, 0, 180), 0, 180);
       int MappedRight = constrain(map(-right, -512, 512, 0, 180), 0, 180);
 
@@ -608,13 +588,18 @@ void loop() {
     }
 
   } else {
-    for (int i = 1; i <= 12; i++) MotorOutput[i].write(90);
-    currentLeftOut = 90;
-    currentRightOut = 90;
+    NeutralAllMotors();
 
     if (now - lastLedUpdate >= LED_INTERVAL_MS) {
       lastLedUpdate = now;
-      fill_solid(leds, LED_COUNT, CRGB(0, 80, 255));
+      FastLED.setBrightness(BRIGHTNESS);
+      if (connected) {
+        fill_solid(leds, LED_COUNT, CRGB(255, 60, 0));
+        fill_solid(leds2, NUM_LEDS2, CRGB(255, 60, 0));
+      } else {
+        fill_solid(leds, LED_COUNT, CRGB(0, 80, 255));
+        fill_solid(leds2, NUM_LEDS2, CRGB(0, 0, 0));
+      }
       FastLED.show();
     }
   }

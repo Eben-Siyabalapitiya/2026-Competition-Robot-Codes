@@ -55,6 +55,10 @@
     width: 100%; max-height: 74vh; object-fit: contain;
     display: block; cursor: crosshair; background: #000;
   }
+  #overlay {
+    position: absolute; left: 0; top: 0;
+    pointer-events: none;
+  }
 
   .hud {
     position: absolute; left: 12px; bottom: 12px; right: 12px;
@@ -144,6 +148,7 @@
 
   <div class="stage">
     <img id="cam" src="/stream" alt="field view">
+    <canvas id="overlay"></canvas>
     <div class="timer" id="timer">90.0</div>
     <div class="hud">
       <span>X <b id="px">—</b></span><span class="sep">|</span>
@@ -202,6 +207,8 @@ let enabled = false;
 let selected = null;
 let startedAt = null;
 
+function say(msg) { document.getElementById('log').textContent = msg; }
+
 async function post(url, body) {
   try {
     const r = await fetch(url, {
@@ -236,8 +243,13 @@ function disable() {
 function cancelGoal() { selected = null; markSelected(); post('/api/cancel'); }
 
 let drawMode = false;
-let drawing = false;
-let stroke = [];
+let anchored = false;
+let placed = [];
+let cursor = null;
+let tagPix = null;
+let frameSize = null;
+
+const SNAP_PX = 26;
 
 function camPoint(e) {
   const img = document.getElementById('cam');
@@ -248,50 +260,159 @@ function camPoint(e) {
   };
 }
 
+function toScreen(p) {
+  const img = document.getElementById('cam');
+  if (!img.naturalWidth) return {x: 0, y: 0};
+  return {
+    x: p.x * (img.clientWidth  / img.naturalWidth),
+    y: p.y * (img.clientHeight / img.naturalHeight)
+  };
+}
+
+function sizeOverlay() {
+  const img = document.getElementById('cam');
+  const c = document.getElementById('overlay');
+  if (c.width !== img.clientWidth || c.height !== img.clientHeight) {
+    c.width = img.clientWidth;
+    c.height = img.clientHeight;
+  }
+}
+
+function drawOverlay() {
+  sizeOverlay();
+  const c = document.getElementById('overlay');
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, c.width, c.height);
+
+  if (drawMode && tagPix && !anchored) {
+    const t = toScreen(tagPix);
+    g.beginPath();
+    g.arc(t.x, t.y, 9, 0, Math.PI * 2);
+    g.strokeStyle = '#ffaa3c';
+    g.lineWidth = 2;
+    g.stroke();
+    g.beginPath();
+    g.arc(t.x, t.y, 3.5, 0, Math.PI * 2);
+    g.fillStyle = '#ffaa3c';
+    g.fill();
+  }
+
+  if (!placed.length) return;
+
+  const pts = placed.map(toScreen);
+  g.strokeStyle = '#ffaa3c';
+  g.lineWidth = 2.5;
+  g.beginPath();
+  g.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+  g.stroke();
+
+  if (anchored && cursor) {
+    const cp = toScreen(cursor);
+    const lastp = pts[pts.length - 1];
+    g.setLineDash([7, 5]);
+    g.strokeStyle = '#8f87ff';
+    g.beginPath();
+    g.moveTo(lastp.x, lastp.y);
+    g.lineTo(cp.x, cp.y);
+    g.stroke();
+    g.setLineDash([]);
+    const dx = cursor.x - placed[placed.length - 1].x;
+    const dy = cursor.y - placed[placed.length - 1].y;
+    const px = Math.hypot(dx, dy).toFixed(0);
+    g.fillStyle = '#8f87ff';
+    g.font = '12px system-ui, sans-serif';
+    g.fillText(px + ' px', cp.x + 10, cp.y - 10);
+  }
+
+  pts.forEach((p, i) => {
+    g.beginPath();
+    g.arc(p.x, p.y, i === 0 ? 5 : 6, 0, Math.PI * 2);
+    g.fillStyle = i === 0 ? '#5dcaa5' : '#ffaa3c';
+    g.fill();
+    g.strokeStyle = '#11141a';
+    g.lineWidth = 1.5;
+    g.stroke();
+  });
+}
+
 document.getElementById('cam').addEventListener('click', (e) => {
-  if (drawMode) return;
   const p = camPoint(e);
-  selected = null;
-  markSelected();
-  post('/api/click', p);
+  if (!drawMode) {
+    selected = null;
+    markSelected();
+    post('/api/click', p);
+    return;
+  }
+  if (!anchored) {
+    if (!tagPix) { say('no tag visible to start from'); return; }
+    const t = toScreen(tagPix);
+    const s = toScreen(p);
+    if (Math.hypot(s.x - t.x, s.y - t.y) > SNAP_PX) {
+      say('click the dot on the tag to start the line');
+      return;
+    }
+    placed = [{x: tagPix.x, y: tagPix.y}];
+    anchored = true;
+    cursor = {x: tagPix.x, y: tagPix.y};
+    drawOverlay();
+    return;
+  }
+  placed.push(p);
+  drawOverlay();
+  sendPath();
 });
 
-document.getElementById('cam').addEventListener('pointerdown', (e) => {
-  if (!drawMode) return;
-  e.preventDefault();
-  drawing = true;
-  stroke = [camPoint(e)];
+document.getElementById('cam').addEventListener('mousemove', (e) => {
+  if (!drawMode || !anchored) return;
+  cursor = camPoint(e);
+  drawOverlay();
 });
 
-document.getElementById('cam').addEventListener('pointermove', (e) => {
-  if (!drawMode || !drawing) return;
-  const p = camPoint(e);
-  const last = stroke[stroke.length - 1];
-  if (Math.hypot(p.x - last.x, p.y - last.y) > 4) stroke.push(p);
-});
-
-document.getElementById('cam').addEventListener('pointerup', async (e) => {
-  if (!drawMode || !drawing) return;
-  drawing = false;
-  stroke.push(camPoint(e));
-  await post('/api/path', {points: stroke});
-  setDrawMode(false);
-});
+async function sendPath() {
+  if (placed.length < 2) return;
+  await post('/api/path', {points: placed.slice(1)});
+}
 
 function setDrawMode(on) {
   drawMode = on;
-  drawing = false;
+  if (!on) { anchored = false; cursor = null; }
   const img = document.getElementById('cam');
-  img.style.cursor = on ? 'crosshair' : 'pointer';
   img.style.outline = on ? '2px solid #ffaa3c' : 'none';
   const b = document.getElementById('drawbtn');
-  b.textContent = on ? 'Drawing… release to load' : 'Draw path';
+  b.textContent = on ? 'Placing line…' : 'Draw path';
   b.classList.toggle('primary', on);
+  drawOverlay();
 }
 
-function toggleDraw() { setDrawMode(!drawMode); }
-function runPath()    { selected = null; markSelected(); post('/api/path/run'); }
-function clearPath()  { setDrawMode(false); post('/api/path/clear'); }
+function toggleDraw() {
+  if (!drawMode) { placed = []; anchored = false; }
+  setDrawMode(!drawMode);
+}
+
+function runPath() {
+  selected = null;
+  markSelected();
+  post('/api/path/run');
+}
+
+function clearPath() {
+  placed = [];
+  anchored = false;
+  cursor = null;
+  setDrawMode(false);
+  post('/api/path/clear');
+}
+
+function undoPoint() {
+  if (placed.length > 1) {
+    placed.pop();
+    drawOverlay();
+    if (placed.length > 1) sendPath(); else post('/api/path/clear');
+  }
+}
+
+window.addEventListener('resize', drawOverlay);
 
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
@@ -301,6 +422,8 @@ document.addEventListener('keydown', (e) => {
   else if (k === 'c') cancelGoal();
   else if (k === 'p') toggleDraw();
   else if (k === 'r') runPath();
+  else if (k === 'z') undoPoint();
+  else if (e.key === 'Escape') setDrawMode(false);
   else if (k >= '1' && k <= '6') target(parseInt(k, 10));
 });
 
@@ -329,6 +452,10 @@ setInterval(async () => {
   }
 
   setDot('d-link', 'ok', 't-link', 'server up');
+
+  tagPix = s.tag ? {x: s.tag[0], y: s.tag[1]} : null;
+  frameSize = s.frame_size || null;
+  if (drawMode) drawOverlay();
 
   if (s.pose) {
     setDot('d-tag', 'ok', 't-tag', 'tag locked');

@@ -291,10 +291,14 @@ def stream():
 def state():
     with ctl.lock:
         pose = ctl.pose
-    with ctl.lock:
         goal = ctl.goal
         goal_label = ctl.goal_label
+        tag = ctl.tag_center
+        frame = ctl.frame
+    size = [int(frame.shape[1]), int(frame.shape[0])] if frame is not None else None
     return jsonify({
+        "tag": list(tag) if tag else None,
+        "frame_size": size,
         "pose": list(pose) if pose else None,
         "goal": list(goal) if goal else None,
         "goal_label": goal_label,

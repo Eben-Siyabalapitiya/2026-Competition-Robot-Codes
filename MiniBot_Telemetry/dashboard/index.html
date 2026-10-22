@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MiniBot</title>
+<style>
+:root{
+  --bg: oklch(11.5% .003 80);
+  --bg-deep: oklch(9% .003 80);
+  --fg: oklch(94% .008 80);
+  --surface: oklch(15.5% .004 80);
+  --raised: oklch(19% .005 80);
+  --muted: oklch(66% .012 80);
+  --faint: oklch(52% .01 80);
+  --hair: oklch(94% .008 80 / .10);
+  --hair-soft: oklch(94% .008 80 / .055);
+  --accent: oklch(70% .16 48);
+  --accent-dim: oklch(70% .16 48 / .18);
+  --good: oklch(74% .15 150);
+  --bad: oklch(63% .19 25);
+  --radius: 14px;
+  --radius-lg: 22px;
+  --sans: "Segoe UI Variable Text", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --display: "Segoe UI Variable Display", "Segoe UI Semibold", ui-sans-serif, system-ui, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --ease: cubic-bezier(.22,.61,.36,1);
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg)}
+body{
+  font-family:var(--sans); font-size:15px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  padding:0 0 40px;
+}
+.shell{width:min(100% - 40px, 1180px); margin-inline:auto}
+
+/* header */
+header{
+  position:sticky; top:0; z-index:10;
+  background:oklch(11.5% .003 80 / .86); backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--hair-soft);
+  padding:18px 0 17px; margin-bottom:28px;
+}
+.bar{display:flex; align-items:center; gap:18px}
+.mark{font-family:var(--display); font-weight:600; font-size:17px; letter-spacing:-.02em}
+.mark i{font-style:normal; color:var(--accent)}
+.spacer{flex:1}
+.live{display:flex; align-items:center; gap:9px; font-family:var(--mono); font-size:11.5px;
+      letter-spacing:.08em; text-transform:uppercase; color:var(--faint)}
+.dot{width:7px; height:7px; border-radius:50%; background:var(--faint);
+     transition:background .3s var(--ease), box-shadow .3s var(--ease)}
+.dot.on{background:var(--good); box-shadow:0 0 0 4px oklch(74% .15 150 / .14)}
+.dot.off{background:var(--bad); box-shadow:0 0 0 4px oklch(63% .19 25 / .14)}
+.age{font-family:var(--mono); font-size:11.5px; color:var(--faint); min-width:62px; text-align:right}
+
+/* layout */
+.grid{display:grid; gap:16px; grid-template-columns:1.12fr .88fr; align-items:start}
+.row{display:grid; gap:16px; grid-template-columns:repeat(4,1fr); margin-top:16px}
+@media(max-width:1000px){
+  .grid{grid-template-columns:1fr}
+  .row{grid-template-columns:repeat(2,1fr)}
+}
+
+.panel{
+  background:var(--surface); border:1px solid var(--hair-soft);
+  border-radius:var(--radius-lg); padding:20px 22px 22px;
+}
+.phead{display:flex; align-items:baseline; gap:12px; margin-bottom:14px}
+.ptitle{font-family:var(--display); font-weight:600; font-size:14px; letter-spacing:-.01em}
+.pnote{font-family:var(--mono); font-size:11px; color:var(--faint); letter-spacing:.05em;
+       margin-left:auto; text-transform:uppercase}
+
+.card{
+  background:var(--surface); border:1px solid var(--hair-soft);
+  border-radius:var(--radius); padding:15px 17px 16px;
+}
+.lbl{font-family:var(--mono); font-size:10.5px; letter-spacing:.11em; text-transform:uppercase;
+     color:var(--faint)}
+.num{font-family:var(--display); font-weight:600; font-size:27px; letter-spacing:-.025em;
+     font-variant-numeric:tabular-nums; margin-top:7px; line-height:1.1}
+.num small{font-size:14px; font-weight:400; color:var(--muted); margin-left:3px}
+.num.s{font-size:20px}
+.foot{font-family:var(--mono); font-size:11px; color:var(--faint); margin-top:5px}
+.foot.good{color:var(--good)} .foot.bad{color:var(--bad)} .foot.warn{color:var(--accent)}
+
+svg{display:block; width:100%; height:auto}
+.gp-body{fill:var(--raised); stroke:var(--hair); stroke-width:1.5}
+.gp-el{fill:oklch(26% .006 80); stroke:var(--hair-soft); stroke-width:1.2;
+       transition:fill .09s linear}
+.gp-el.hit{fill:var(--accent)}
+.gp-gl{fill:none; stroke:var(--muted); stroke-width:1.6; stroke-linecap:round;
+       transition:stroke .09s linear; pointer-events:none}
+.gp-el.hit + .gp-gl, .gp-gl.hit{stroke:oklch(16% .02 60)}
+.gp-well{fill:oklch(13% .004 80); stroke:var(--hair-soft); stroke-width:1.2}
+.gp-stick{fill:oklch(30% .006 80); stroke:oklch(94% .008 80 / .22); stroke-width:1.6;
+          transition:fill .09s linear}
+.gp-stick.hit{fill:var(--accent)}
+.trig-bg{fill:oklch(13% .004 80)}
+.trig-fill{fill:var(--accent); transition:height .08s linear, y .08s linear}
+.bot-frame{fill:oklch(24% .006 80); stroke:var(--hair); stroke-width:1.5}
+.bot-tyre{fill:oklch(17% .004 80); stroke:var(--hair); stroke-width:1.5}
+.bot-hub{fill:var(--raised); stroke:var(--hair-soft); stroke-width:1.2}
+.bot-arm{fill:oklch(30% .02 50); stroke:var(--accent); stroke-width:1.5}
+.bot-pivot{fill:var(--accent)}
+.bot-ground{stroke:var(--hair-soft); stroke-width:1.5; stroke-dasharray:3 6}
+
+.meter{height:5px; background:oklch(13% .004 80); border-radius:3px; margin-top:11px; overflow:hidden}
+.meter i{display:block; height:100%; width:0; background:var(--accent);
+         border-radius:3px; transition:width .25s var(--ease), background .25s var(--ease)}
+canvas{width:100%; height:64px; display:block; margin-top:12px}
+
+.pair{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:16px}
+.stat{border-top:1px solid var(--hair-soft); padding-top:11px}
+.stat b{display:block; font-family:var(--display); font-weight:600; font-size:19px;
+        font-variant-numeric:tabular-nums; letter-spacing:-.02em; margin-top:4px}
+.quad{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:18px}
+
+footer{margin-top:26px; font-family:var(--mono); font-size:11.5px; color:var(--faint);
+       letter-spacing:.03em; display:flex; gap:22px; flex-wrap:wrap;
+       border-top:1px solid var(--hair-soft); padding-top:16px}
+footer span b{color:var(--muted); font-weight:500}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="shell bar">
+    <div class="mark">MiniBot<i>.</i></div>
+    <div class="spacer"></div>
+    <div class="live"><span class="dot" id="dot"></span><span id="state">offline</span></div>
+    <div class="age" id="age">—</div>
+  </div>
+</header>
+
+<div class="shell">
+
+  <div class="grid">
+
+    <!-- CONTROLLER -->
+    <div class="panel">
+      <div class="phead">
+        <div class="ptitle">Controller</div>
+        <div class="pnote" id="padstate">no pad</div>
+      </div>
+
+      <svg viewBox="0 0 560 330" role="img" aria-label="Controller input">
+        <!-- grips -->
+        <rect class="gp-body" x="128" y="168" width="86" height="142" rx="40"
+              transform="rotate(-16 171 200)"/>
+        <rect class="gp-body" x="346" y="168" width="86" height="142" rx="40"
+              transform="rotate(16 389 200)"/>
+        <!-- shoulder -->
+        <rect class="gp-el" id="b-l2" x="152" y="22" width="68" height="20" rx="9"/>
+        <rect class="gp-el" id="b-r2" x="340" y="22" width="68" height="20" rx="9"/>
+        <rect class="trig-bg" x="156" y="26" width="60" height="12" rx="6"/>
+        <rect class="trig-bg" x="344" y="26" width="60" height="12" rx="6"/>
+        <rect class="trig-fill" id="t-l2" x="156" y="26" width="0" height="12" rx="6"/>
+        <rect class="trig-fill" id="t-r2" x="344" y="26" width="0" height="12" rx="6"/>
+        <rect class="gp-el" id="b-l1" x="150" y="46" width="72" height="20" rx="9"/>
+        <rect class="gp-el" id="b-r1" x="338" y="46" width="72" height="20" rx="9"/>
+        <!-- body -->
+        <rect class="gp-body" x="130" y="58" width="300" height="156" rx="34"/>
+        <!-- touchpad -->
+        <rect class="gp-el" id="b-pad" x="238" y="74" width="84" height="48" rx="9"/>
+        <!-- share / options -->
+        <rect class="gp-el" id="b-share" x="214" y="78" width="11" height="24" rx="4"/>
+        <rect class="gp-el" id="b-opt" x="335" y="78" width="11" height="24" rx="4"/>
+        <!-- dpad -->
+        <rect class="gp-el" id="d-up"    x="177" y="100" width="22" height="24" rx="5"/>
+        <rect class="gp-el" id="d-down"  x="177" y="146" width="22" height="24" rx="5"/>
+        <rect class="gp-el" id="d-left"  x="153" y="124" width="24" height="22" rx="5"/>
+        <rect class="gp-el" id="d-right" x="199" y="124" width="24" height="22" rx="5"/>
+        <rect class="gp-well" x="177" y="124" width="22" height="22"/>
+        <!-- face buttons -->
+        <circle class="gp-el" id="b-tri" cx="378" cy="111" r="15"/>
+        <path class="gp-gl" id="g-tri" d="M378 105 l6 10 h-12 z"/>
+        <circle class="gp-el" id="b-cir" cx="404" cy="135" r="15"/>
+        <circle class="gp-gl" id="g-cir" cx="404" cy="135" r="6"/>
+        <circle class="gp-el" id="b-cro" cx="378" cy="159" r="15"/>
+        <path class="gp-gl" id="g-cro" d="M373 154 l10 10 M383 154 l-10 10"/>
+        <circle class="gp-el" id="b-sqr" cx="352" cy="135" r="15"/>
+        <rect class="gp-gl" id="g-sqr" x="347" y="130" width="10" height="10" rx="1.5"/>
+        <!-- sticks -->
+        <circle class="gp-well" cx="233" cy="178" r="30"/>
+        <circle class="gp-stick" id="s-l" cx="233" cy="178" r="21"/>
+        <circle class="gp-well" cx="327" cy="178" r="30"/>
+        <circle class="gp-stick" id="s-r" cx="327" cy="178" r="21"/>
+      </svg>
+
+      <div class="quad">
+        <div><div class="lbl">L stick</div><div class="num s" id="v-lstick">0, 0</div></div>
+        <div><div class="lbl">R stick</div><div class="num s" id="v-rstick">0, 0</div></div>
+        <div><div class="lbl">L2</div><div class="num s" id="v-l2">0</div></div>
+        <div><div class="lbl">R2</div><div class="num s" id="v-r2">0</div></div>
+      </div>
+    </div>
+
+    <!-- ROBOT -->
+    <div class="panel">
+      <div class="phead">
+        <div class="ptitle">Chassis</div>
+        <div class="pnote" id="armstate">—</div>
+      </div>
+
+      <svg viewBox="0 0 460 300" role="img" aria-label="Robot arm position">
+        <line class="bot-ground" x1="16" y1="276" x2="444" y2="276"/>
+
+        <g id="support">
+          <rect class="bot-frame" x="-62" y="-5" width="62" height="10" rx="4"/>
+        </g>
+
+        <path class="bot-frame" d="M112 196 L380 196 L360 126 L132 126 Z"/>
+        <rect class="bot-frame" x="92" y="196" width="296" height="15" rx="6"/>
+
+        <g id="arm">
+          <rect class="bot-arm" x="-136" y="-8" width="146" height="16" rx="5"/>
+          <path class="bot-arm" d="M-136 -10 l-28 -20 l-24 30 l30 28 l22 -16 z"/>
+        </g>
+        <circle class="bot-pivot" cx="356" cy="126" r="5"/>
+
+        <g>
+          <circle class="bot-tyre" cx="146" cy="234" r="38"/>
+          <circle class="bot-hub" cx="146" cy="234" r="13"/>
+          <circle class="bot-tyre" cx="240" cy="234" r="38"/>
+          <circle class="bot-hub" cx="240" cy="234" r="13"/>
+          <circle class="bot-tyre" cx="334" cy="234" r="38"/>
+          <circle class="bot-hub" cx="334" cy="234" r="13"/>
+        </g>
+      </svg>
+
+      <div class="pair">
+        <div class="stat"><div class="lbl">Arm</div><b id="v-arm">—</b></div>
+        <div class="stat"><div class="lbl">Trim</div><b id="v-trim">—</b></div>
+        <div class="stat"><div class="lbl">Left drive</div><b id="v-dl">—</b></div>
+        <div class="stat"><div class="lbl">Right drive</div><b id="v-dr">—</b></div>
+      </div>
+
+      <div class="quad">
+        <div><div class="lbl">Servo 7</div><div class="num s" id="v-s7">—</div></div>
+        <div><div class="lbl">Servo 8</div><div class="num s" id="v-s8">—</div></div>
+        <div><div class="lbl">Servo 9</div><div class="num s" id="v-s9">—</div></div>
+        <div><div class="lbl">Servo 10</div><div class="num s" id="v-s10">—</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="card" style="grid-column:span 2">
+      <div class="lbl">Robot battery</div>
+      <div class="num" id="v-volts">—<small>V</small></div>
+      <div class="foot" id="v-vstate">waiting for data</div>
+      <canvas id="spark"></canvas>
+    </div>
+
+    <div class="card">
+      <div class="lbl">Controller battery</div>
+      <div class="num" id="v-bat">—<small>%</small></div>
+      <div class="meter"><i id="m-bat"></i></div>
+      <div class="foot" id="v-link">link —</div>
+    </div>
+
+    <div class="card">
+      <div class="lbl">LED brightness</div>
+      <div class="num" id="v-bright">—<small>%</small></div>
+      <div class="meter"><i id="m-bright"></i></div>
+      <div class="foot" id="v-up">uptime —</div>
+    </div>
+  </div>
+
+
+  <div class="row">
+    <div class="card">
+      <div class="lbl">Last reset</div>
+      <div class="num s" id="v-rst">—</div>
+      <div class="foot" id="v-reboot">no reboot seen</div>
+    </div>
+
+    <div class="card">
+      <div class="lbl">Worst link gap</div>
+      <div class="num s" id="v-gap">—<small>ms</small></div>
+      <div class="foot" id="v-gapnote">since power-on</div>
+    </div>
+
+    <div class="card">
+      <div class="lbl">Loop rate</div>
+      <div class="num s" id="v-hz">—<small>Hz</small></div>
+      <div class="foot" id="v-hznote">target 200</div>
+    </div>
+
+    <div class="card">
+      <div class="lbl">Lowest voltage</div>
+      <div class="num s" id="v-vmin">—<small>V</small></div>
+      <div class="foot">sag under load</div>
+    </div>
+  </div>
+  <footer>
+    <span><b>Network</b> MiniBot</span>
+    <span><b>Toggle</b> Circle</span>
+    <span><b>Memory</b> <i id="v-heap" style="font-style:normal">—</i></span>
+    <span><b>Clients</b> <i id="v-sta" style="font-style:normal">—</i></span>
+  </footer>
+</div>
+
+<script>
+const WS_URL = "ws://10.0.0.1/ws";
+const BTN = { cross:0x0001, circle:0x0002, square:0x0004, triangle:0x0008,
+              l1:0x0010, r1:0x0020, l2:0x0040, r2:0x0080, l3:0x0100, r3:0x0200 };
+const DP  = { up:1, down:2, right:4, left:8 };
+const MISC= { ps:1, share:2, options:4, touch:8 };
+
+const $ = id => document.getElementById(id);
+let sock = null, lastMsg = 0, seen = false, lastUp = null, reboots = 0;
+const volts = [];
+
+function hit(el, on){ if (el) el.classList.toggle("hit", !!on); }
+
+function connect(){
+  if (sock && sock.readyState < 2) return;
+  setState("connecting", null);
+  try { sock = new WebSocket(WS_URL); } catch(e){ return retry(); }
+  sock.onopen    = () => setState("live", true);
+  sock.onclose   = () => { setState("offline", false); retry(); };
+  sock.onerror   = () => sock && sock.close();
+  sock.onmessage = e => { try { paint(JSON.parse(e.data)); lastMsg = Date.now(); seen = true; } catch(x){} };
+}
+function retry(){ setTimeout(connect, 1500); }
+function setState(txt, ok){
+  $("state").textContent = txt;
+  $("dot").className = "dot" + (ok === true ? " on" : ok === false ? " off" : "");
+}
+
+function paint(d){
+  const b = d.btn|0, m = d.misc|0, p = d.dp|0;
+
+  hit($("b-cro"), b & BTN.cross);    hit($("g-cro"), b & BTN.cross);
+  hit($("b-cir"), b & BTN.circle);   hit($("g-cir"), b & BTN.circle);
+  hit($("b-sqr"), b & BTN.square);   hit($("g-sqr"), b & BTN.square);
+  hit($("b-tri"), b & BTN.triangle); hit($("g-tri"), b & BTN.triangle);
+  hit($("b-l1"), b & BTN.l1);  hit($("b-r1"), b & BTN.r1);
+  hit($("b-l2"), b & BTN.l2);  hit($("b-r2"), b & BTN.r2);
+  hit($("s-l"),  b & BTN.l3);  hit($("s-r"),  b & BTN.r3);
+  hit($("d-up"), p & DP.up);   hit($("d-down"), p & DP.down);
+  hit($("d-left"), p & DP.left); hit($("d-right"), p & DP.right);
+  hit($("b-share"), m & MISC.share); hit($("b-opt"), m & MISC.options);
+  hit($("b-pad"), m & MISC.touch);
+
+  const lx = d.lx|0, ly = d.ly|0, rx = d.rx|0, ry = d.ry|0;
+  place("s-l", 233, 178, lx, ly);
+  place("s-r", 327, 178, rx, ry);
+  $("v-lstick").textContent = lx + ", " + ly;
+  $("v-rstick").textContent = rx + ", " + ry;
+
+  trig("t-l2", 156, d.l2|0); trig("t-r2", 344, d.r2|0);
+  $("v-l2").textContent = d.l2|0;
+  $("v-r2").textContent = d.r2|0;
+  $("padstate").textContent = d.link ? "connected" : "no pad";
+
+  // chassis
+  const arm = d.rest|0, sup = d.sup|0;
+  const armRot = (arm / 180) * 78;
+  $("arm").setAttribute("transform", `translate(356,126) rotate(${armRot.toFixed(1)})`);
+  const supRot = (sup / 150) * 68;
+  $("support").setAttribute("transform", `translate(122,186) rotate(${supRot.toFixed(1)})`);
+  $("v-arm").textContent = arm + "°";
+  $("v-trim").textContent = (d.trim > 0 ? "+" : "") + (d.trim|0) + "°";
+  $("v-dl").textContent = d.l|0;
+  $("v-dr").textContent = d.r|0;
+  $("armstate").textContent = arm <= 10 ? "down" : arm >= 100 ? "raised" : "mid";
+
+  // power
+  const v = Number(d.v) || 0;
+  $("v-volts").innerHTML = v.toFixed(2) + "<small>V</small>";
+  const vs = $("v-vstate");
+  if (d.warn){ vs.textContent = "low — swap the pack"; vs.className = "foot bad"; }
+  else if (v < 7.6){ vs.textContent = "running down"; vs.className = "foot warn"; }
+  else { vs.textContent = "healthy"; vs.className = "foot good"; }
+  volts.push(v); if (volts.length > 150) volts.shift();
+  spark();
+
+  const bat = Math.round((d.bat|0) / 255 * 100);
+  $("v-bat").innerHTML = bat + "<small>%</small>";
+  const mb = $("m-bat");
+  mb.style.width = bat + "%";
+  mb.style.background = bat < 25 ? "var(--bad)" : bat < 50 ? "var(--accent)" : "var(--good)";
+  const lk = $("v-link");
+  lk.textContent = d.link ? "link live" : "link stale";
+  lk.className = "foot " + (d.link ? "good" : "bad");
+
+  $("v-bright").innerHTML = (d.bright|0) + "<small>%</small>";
+  $("m-bright").style.width = (d.bright|0) + "%";
+  $("v-up").textContent = "uptime " + fmt(d.up|0);
+  $("v-heap").textContent = Math.round((d.heap|0)/1024) + "K";
+  $("v-sta").textContent = d.sta|0;
+
+  $("v-s7").textContent  = (d.s7|0) + "\u00B0";
+  $("v-s8").textContent  = (d.s8|0) + "\u00B0";
+  $("v-s9").textContent  = (d.s9|0) + "\u00B0";
+  $("v-s10").textContent = (d.s10|0) + "\u00B0";
+
+  const RST = ["unknown","power-on","external","software","panic",
+               "int watchdog","task watchdog","watchdog","deep sleep",
+               "brownout","sdio"];
+  const rc = d.rst|0;
+  const rEl = $("v-rst");
+  rEl.textContent = RST[rc] || ("code " + rc);
+  rEl.style.color = (rc===9||rc===4||rc===5||rc===6||rc===7) ? "var(--bad)" : "";
+
+  const up = d.up|0;
+  if (lastUp !== null && up < lastUp) reboots++;
+  lastUp = up;
+  const rb = $("v-reboot");
+  rb.textContent = reboots ? (reboots + " reboot" + (reboots>1?"s":"") + " this session") : "no reboot seen";
+  rb.className = "foot" + (reboots ? " bad" : "");
+
+  const gap = d.gap|0;
+  $("v-gap").innerHTML = gap + "<small>ms</small>";
+  const gn = $("v-gapnote");
+  gn.textContent = gap > 300 ? "dropouts happening" : gap > 120 ? "some jitter" : "steady";
+  gn.className = "foot" + (gap > 300 ? " bad" : gap > 120 ? " warn" : " good");
+
+  const hz = d.hz|0;
+  $("v-hz").innerHTML = hz + "<small>Hz</small>";
+  const hn = $("v-hznote");
+  hn.textContent = hz < 100 ? "running slow" : "healthy";
+  hn.className = "foot" + (hz < 100 ? " bad" : " good");
+
+  const vmin = Number(d.vmin) || 0;
+  $("v-vmin").innerHTML = (vmin ? vmin.toFixed(2) : "—") + "<small>V</small>";
+}
+
+function place(id, cx, cy, x, y){
+  const el = $(id);
+  if (!el) return;
+  el.setAttribute("cx", cx + (x / 512) * 12);
+  el.setAttribute("cy", cy + (y / 512) * 12);
+}
+function trig(id, x, val){
+  const w = Math.max(0, Math.min(1, val / 1023)) * 60;
+  $(id).setAttribute("width", w.toFixed(1));
+}
+function fmt(s){
+  const h = (s/3600)|0, m = ((s%3600)/60)|0;
+  return h ? h + "h " + m + "m" : m ? m + "m " + (s%60) + "s" : s + "s";
+}
+
+function spark(){
+  const c = $("spark"), r = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (!w) return;
+  c.width = w * r; c.height = h * r;
+  const g = c.getContext("2d"); g.scale(r, r); g.clearRect(0,0,w,h);
+  if (volts.length < 2) return;
+  const lo = Math.min(...volts) - .12, hi = Math.max(...volts) + .12;
+  const X = i => i / (volts.length - 1) * w;
+  const Y = v => h - (v - lo) / ((hi - lo) || 1) * (h - 6) - 3;
+  g.beginPath();
+  volts.forEach((v,i) => i ? g.lineTo(X(i), Y(v)) : g.moveTo(X(i), Y(v)));
+  const line = getComputedStyle(document.documentElement).getPropertyValue("--accent");
+  g.strokeStyle = line; g.lineWidth = 1.8; g.lineJoin = "round"; g.stroke();
+  g.lineTo(w, h); g.lineTo(0, h); g.closePath();
+  const grad = g.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, "oklch(70% .16 48 / .22)");
+  grad.addColorStop(1, "oklch(70% .16 48 / 0)");
+  g.fillStyle = grad; g.fill();
+}
+
+setInterval(() => {
+  const el = $("age");
+  if (!seen){ el.textContent = "—"; return; }
+  const s = (Date.now() - lastMsg) / 1000;
+  el.textContent = s < 1 ? "now" : s.toFixed(1) + "s";
+}, 200);
+
+addEventListener("resize", spark);
+connect();
+</script>
+</body>
+</html>

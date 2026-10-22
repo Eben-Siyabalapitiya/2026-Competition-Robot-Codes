@@ -21,14 +21,16 @@
   --bad: oklch(63% .19 25);
   --radius: 14px;
   --radius-lg: 22px;
-  --sans: "Segoe UI Variable Text", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-  --display: "Segoe UI Variable Display", "Segoe UI Semibold", ui-sans-serif, system-ui, sans-serif;
-  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --sans: Corbel, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --display: Corbel, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
   --ease: cubic-bezier(.22,.61,.36,1);
 }
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--fg)}
 body{
+  font-variant-numeric:lining-nums tabular-nums;
+  font-feature-settings:"lnum" 1,"tnum" 1;
   font-family:var(--sans); font-size:15px; line-height:1.6;
   -webkit-font-smoothing:antialiased;
   padding:0 0 40px;
@@ -103,6 +105,11 @@ svg{display:block; width:100%; height:auto}
 .bot-hub{fill:var(--raised); stroke:var(--hair-soft); stroke-width:1.2}
 .bot-arm{fill:oklch(30% .02 50); stroke:var(--accent); stroke-width:1.5}
 .bot-pivot{fill:var(--accent)}
+.bot-rim{fill:none; stroke:var(--hair); stroke-width:1.3; stroke-linecap:round}
+.bot-deck{fill:oklch(28% .006 80); stroke:var(--hair); stroke-width:1.3}
+.bot-box{fill:oklch(18% .004 80); stroke:var(--hair-soft); stroke-width:1.2}
+.bot-tread{fill:none; stroke:var(--hair); stroke-width:5; stroke-dasharray:3 9; opacity:.5}
+.bot-link{fill:oklch(26% .012 50); stroke:var(--hair); stroke-width:1.2}
 .bot-ground{stroke:var(--hair-soft); stroke-width:1.5; stroke-dasharray:3 6}
 
 .meter{height:5px; background:oklch(13% .004 80); border-radius:3px; margin-top:11px; overflow:hidden}
@@ -144,48 +151,52 @@ footer span b{color:var(--muted); font-weight:500}
         <div class="pnote" id="padstate">no pad</div>
       </div>
 
-      <svg viewBox="0 0 560 330" role="img" aria-label="Controller input">
-        <!-- grips -->
-        <rect class="gp-body" x="128" y="168" width="86" height="142" rx="40"
-              transform="rotate(-16 171 200)"/>
-        <rect class="gp-body" x="346" y="168" width="86" height="142" rx="40"
-              transform="rotate(16 389 200)"/>
-        <!-- shoulder -->
-        <rect class="gp-el" id="b-l2" x="152" y="22" width="68" height="20" rx="9"/>
-        <rect class="gp-el" id="b-r2" x="340" y="22" width="68" height="20" rx="9"/>
-        <rect class="trig-bg" x="156" y="26" width="60" height="12" rx="6"/>
-        <rect class="trig-bg" x="344" y="26" width="60" height="12" rx="6"/>
-        <rect class="trig-fill" id="t-l2" x="156" y="26" width="0" height="12" rx="6"/>
-        <rect class="trig-fill" id="t-r2" x="344" y="26" width="0" height="12" rx="6"/>
-        <rect class="gp-el" id="b-l1" x="150" y="46" width="72" height="20" rx="9"/>
-        <rect class="gp-el" id="b-r1" x="338" y="46" width="72" height="20" rx="9"/>
-        <!-- body -->
-        <rect class="gp-body" x="130" y="58" width="300" height="156" rx="34"/>
-        <!-- touchpad -->
-        <rect class="gp-el" id="b-pad" x="238" y="74" width="84" height="48" rx="9"/>
-        <!-- share / options -->
-        <rect class="gp-el" id="b-share" x="214" y="78" width="11" height="24" rx="4"/>
-        <rect class="gp-el" id="b-opt" x="335" y="78" width="11" height="24" rx="4"/>
-        <!-- dpad -->
-        <rect class="gp-el" id="d-up"    x="177" y="100" width="22" height="24" rx="5"/>
-        <rect class="gp-el" id="d-down"  x="177" y="146" width="22" height="24" rx="5"/>
-        <rect class="gp-el" id="d-left"  x="153" y="124" width="24" height="22" rx="5"/>
-        <rect class="gp-el" id="d-right" x="199" y="124" width="24" height="22" rx="5"/>
-        <rect class="gp-well" x="177" y="124" width="22" height="22"/>
-        <!-- face buttons -->
-        <circle class="gp-el" id="b-tri" cx="378" cy="111" r="15"/>
-        <path class="gp-gl" id="g-tri" d="M378 105 l6 10 h-12 z"/>
-        <circle class="gp-el" id="b-cir" cx="404" cy="135" r="15"/>
-        <circle class="gp-gl" id="g-cir" cx="404" cy="135" r="6"/>
-        <circle class="gp-el" id="b-cro" cx="378" cy="159" r="15"/>
-        <path class="gp-gl" id="g-cro" d="M373 154 l10 10 M383 154 l-10 10"/>
-        <circle class="gp-el" id="b-sqr" cx="352" cy="135" r="15"/>
-        <rect class="gp-gl" id="g-sqr" x="347" y="130" width="10" height="10" rx="1.5"/>
-        <!-- sticks -->
-        <circle class="gp-well" cx="233" cy="178" r="30"/>
-        <circle class="gp-stick" id="s-l" cx="233" cy="178" r="21"/>
-        <circle class="gp-well" cx="327" cy="178" r="30"/>
-        <circle class="gp-stick" id="s-r" cx="327" cy="178" r="21"/>
+      <svg viewBox="0 0 520 318" role="img" aria-label="Controller input">
+        <rect class="gp-el" id="b-l2" x="134" y="14" width="74" height="19" rx="9"/>
+        <rect class="gp-el" id="b-r2" x="312" y="14" width="74" height="19" rx="9"/>
+        <rect class="trig-bg" x="138" y="18" width="66" height="11" rx="5"/>
+        <rect class="trig-bg" x="316" y="18" width="66" height="11" rx="5"/>
+        <rect class="trig-fill" id="t-l2" x="138" y="18" width="0" height="11" rx="5"/>
+        <rect class="trig-fill" id="t-r2" x="316" y="18" width="0" height="11" rx="5"/>
+        <rect class="gp-el" id="b-l1" x="132" y="37" width="78" height="19" rx="9"/>
+        <rect class="gp-el" id="b-r1" x="310" y="37" width="78" height="19" rx="9"/>
+
+        <path class="gp-body" d="M110 118
+          C110 76, 140 58, 190 56 L330 56
+          C380 58, 410 76, 410 118
+          C418 168, 412 208, 396 244
+          C384 272, 362 286, 340 280
+          C318 274, 306 250, 300 222
+          C296 204, 288 196, 260 196
+          C232 196, 224 204, 220 222
+          C214 250, 202 274, 180 280
+          C158 286, 136 272, 124 244
+          C108 208, 102 168, 110 118 Z"/>
+
+        <rect class="gp-well" x="246" y="54" width="28" height="4" rx="2"/>
+        <rect class="gp-el" id="b-pad" x="218" y="80" width="84" height="46" rx="8"/>
+        <rect class="gp-el" id="b-share" x="196" y="82" width="10" height="22" rx="3.5"/>
+        <rect class="gp-el" id="b-opt" x="314" y="82" width="10" height="22" rx="3.5"/>
+
+        <rect class="gp-el" id="d-up"    x="157" y="106" width="22" height="24" rx="5"/>
+        <rect class="gp-el" id="d-down"  x="157" y="152" width="22" height="24" rx="5"/>
+        <rect class="gp-el" id="d-left"  x="133" y="130" width="24" height="22" rx="5"/>
+        <rect class="gp-el" id="d-right" x="179" y="130" width="24" height="22" rx="5"/>
+        <rect class="gp-well" x="157" y="130" width="22" height="22"/>
+
+        <circle class="gp-el" id="b-tri" cx="352" cy="115" r="15"/>
+        <path class="gp-gl" id="g-tri" d="M352 109 l6.5 11 h-13 z"/>
+        <circle class="gp-el" id="b-cir" cx="378" cy="141" r="15"/>
+        <circle class="gp-gl" id="g-cir" cx="378" cy="141" r="6"/>
+        <circle class="gp-el" id="b-cro" cx="352" cy="167" r="15"/>
+        <path class="gp-gl" id="g-cro" d="M347 162 l10 10 M357 162 l-10 10"/>
+        <circle class="gp-el" id="b-sqr" cx="326" cy="141" r="15"/>
+        <rect class="gp-gl" id="g-sqr" x="321" y="136" width="10" height="10" rx="1.5"/>
+
+        <circle class="gp-well" cx="214" cy="196" r="29"/>
+        <circle class="gp-stick" id="s-l" cx="214" cy="196" r="20"/>
+        <circle class="gp-well" cx="306" cy="196" r="29"/>
+        <circle class="gp-stick" id="s-r" cx="306" cy="196" r="20"/>
       </svg>
 
       <div class="quad">
@@ -203,29 +214,40 @@ footer span b{color:var(--muted); font-weight:500}
         <div class="pnote" id="armstate">—</div>
       </div>
 
-      <svg viewBox="0 0 460 300" role="img" aria-label="Robot arm position">
-        <line class="bot-ground" x1="16" y1="276" x2="444" y2="276"/>
+      <svg viewBox="0 0 480 300" role="img" aria-label="Robot arm position">
+        <line class="bot-ground" x1="14" y1="280" x2="466" y2="280"/>
 
         <g id="support">
-          <rect class="bot-frame" x="-62" y="-5" width="62" height="10" rx="4"/>
+          <rect class="bot-frame" x="-58" y="-4" width="58" height="9" rx="3"/>
+          <rect class="bot-frame" x="-58" y="-16" width="11" height="14" rx="3"/>
         </g>
 
-        <path class="bot-frame" d="M112 196 L380 196 L360 126 L132 126 Z"/>
-        <rect class="bot-frame" x="92" y="196" width="296" height="15" rx="6"/>
+        <path class="bot-frame" d="M118 192 L364 192 L348 120 L134 120 Z"/>
+        <path class="bot-rim" d="M134 120 L348 120 M126 134 L356 134"/>
+
+        <rect class="bot-frame" x="96" y="192" width="290" height="13" rx="5"/>
+        <rect class="bot-deck" x="84" y="178" width="314" height="9" rx="4"/>
+
+        <rect class="bot-box" x="300" y="158" width="52" height="20" rx="4"/>
 
         <g id="arm">
-          <rect class="bot-arm" x="-136" y="-8" width="146" height="16" rx="5"/>
-          <path class="bot-arm" d="M-136 -10 l-28 -20 l-24 30 l30 28 l22 -16 z"/>
+          <rect class="bot-arm" x="-128" y="-7" width="138" height="14" rx="4"/>
+          <rect class="bot-link" x="-96" y="6" width="86" height="7" rx="3"/>
+          <path class="bot-arm" d="M-128 -9 l-26 -22 l-26 32 l32 28 l20 -18 z"/>
         </g>
-        <circle class="bot-pivot" cx="356" cy="126" r="5"/>
+        <circle class="bot-pivot" cx="344" cy="122" r="5"/>
+        <circle class="bot-pivot" cx="344" cy="140" r="3.5"/>
 
         <g>
-          <circle class="bot-tyre" cx="146" cy="234" r="38"/>
-          <circle class="bot-hub" cx="146" cy="234" r="13"/>
-          <circle class="bot-tyre" cx="240" cy="234" r="38"/>
-          <circle class="bot-hub" cx="240" cy="234" r="13"/>
-          <circle class="bot-tyre" cx="334" cy="234" r="38"/>
-          <circle class="bot-hub" cx="334" cy="234" r="13"/>
+          <circle class="bot-tyre" cx="134" cy="232" r="39"/>
+          <circle class="bot-tread" cx="134" cy="232" r="34"/>
+          <circle class="bot-hub" cx="134" cy="232" r="14"/>
+          <circle class="bot-tyre" cx="232" cy="232" r="39"/>
+          <circle class="bot-tread" cx="232" cy="232" r="34"/>
+          <circle class="bot-hub" cx="232" cy="232" r="14"/>
+          <circle class="bot-tyre" cx="330" cy="232" r="39"/>
+          <circle class="bot-tread" cx="330" cy="232" r="34"/>
+          <circle class="bot-hub" cx="330" cy="232" r="14"/>
         </g>
       </svg>
 
@@ -346,12 +368,12 @@ function paint(d){
   hit($("b-pad"), m & MISC.touch);
 
   const lx = d.lx|0, ly = d.ly|0, rx = d.rx|0, ry = d.ry|0;
-  place("s-l", 233, 178, lx, ly);
-  place("s-r", 327, 178, rx, ry);
+  place("s-l", 214, 196, lx, ly);
+  place("s-r", 306, 196, rx, ry);
   $("v-lstick").textContent = lx + ", " + ly;
   $("v-rstick").textContent = rx + ", " + ry;
 
-  trig("t-l2", 156, d.l2|0); trig("t-r2", 344, d.r2|0);
+  trig("t-l2", 138, d.l2|0); trig("t-r2", 316, d.r2|0);
   $("v-l2").textContent = d.l2|0;
   $("v-r2").textContent = d.r2|0;
   $("padstate").textContent = d.link ? "connected" : "no pad";
@@ -359,9 +381,9 @@ function paint(d){
   // chassis
   const arm = d.rest|0, sup = d.sup|0;
   const armRot = (arm / 180) * 78;
-  $("arm").setAttribute("transform", `translate(356,126) rotate(${armRot.toFixed(1)})`);
+  $("arm").setAttribute("transform", `translate(344,122) rotate(${armRot.toFixed(1)})`);
   const supRot = (sup / 150) * 68;
-  $("support").setAttribute("transform", `translate(122,186) rotate(${supRot.toFixed(1)})`);
+  $("support").setAttribute("transform", `translate(118,184) rotate(${supRot.toFixed(1)})`);
   $("v-arm").textContent = arm + "°";
   $("v-trim").textContent = (d.trim > 0 ? "+" : "") + (d.trim|0) + "°";
   $("v-dl").textContent = d.l|0;
@@ -436,7 +458,7 @@ function place(id, cx, cy, x, y){
   el.setAttribute("cy", cy + (y / 512) * 12);
 }
 function trig(id, x, val){
-  const w = Math.max(0, Math.min(1, val / 1023)) * 60;
+  const w = Math.max(0, Math.min(1, val / 1023)) * 66;
   $(id).setAttribute("width", w.toFixed(1));
 }
 function fmt(s){

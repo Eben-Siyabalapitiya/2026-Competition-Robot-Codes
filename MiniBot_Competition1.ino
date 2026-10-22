@@ -7,6 +7,9 @@ int servoAngle = 90;
 int supportAngle = 0;
 const int SUPPORT_ZERO = 0;
 const int SUPPORT_MAX  = 150;
+const int SUPPORT_HOME_DEADZONE = 3;
+
+const float TURN_SCALE = 0.75;
 
 #define LED_PIN2 22
 #define NUM_LEDS2 18
@@ -502,7 +505,7 @@ void loop() {
     if (myController->r2() || myController->l1()) {
       supportAngle = SUPPORT_MAX;
     } else {
-      supportAngle = SUPPORT_ZERO;
+      supportAngle = SUPPORT_ZERO + SUPPORT_HOME_DEADZONE;
     }
     MotorOutput[9].write(constrain((180 - supportAngle) + TRIM_9, 0, 180));
     MotorOutput[10].write(constrain(supportAngle + TRIM_10, 0, 180));
@@ -524,7 +527,7 @@ void loop() {
 
   
 int moveValue = myController->axisRX()* 0.8;
-int turnValue = -myController->axisY();
+int turnValue = -myController->axisY() * TURN_SCALE;
 
 int left = moveValue + turnValue;
 int right = moveValue - turnValue;

@@ -295,6 +295,7 @@ def state():
         goal_label = ctl.goal_label
         tag = ctl.tag_center
         frame = ctl.frame
+        path = [list(p) for p in ctl.path]
     size = [int(frame.shape[1]), int(frame.shape[0])] if frame is not None else None
     return jsonify({
         "tag": list(tag) if tag else None,
@@ -306,7 +307,20 @@ def state():
         "status": ctl.status,
         "calibrated": ctl.fmap.ready,
         "calib_points": len(ctl.calib_shots),
+        "path": path,
+        "field": [FIELD_X_MM, FIELD_Y_MM],
     })
+
+@app.route("/api/goto_field", methods=["POST"])
+def goto_field():
+    fx = float(request.json["x"])
+    fy = float(request.json["y"])
+    if not (0 <= fx <= FIELD_X_MM and 0 <= fy <= FIELD_Y_MM):
+        return jsonify({"message": "that point is off the field"})
+    ctl.set_goal((fx, fy), f"{fx:.0f},{fy:.0f}")
+    ctl.status = f"driving to {fx:.0f},{fy:.0f}"
+    ctl.queue(CMD_GOTO_XY, gx=int(round(fx)), gy=int(round(fy)))
+    return jsonify({"message": f"going to {fx:.0f},{fy:.0f}"})
 
 @app.route("/api/enable", methods=["POST"])
 def enable():

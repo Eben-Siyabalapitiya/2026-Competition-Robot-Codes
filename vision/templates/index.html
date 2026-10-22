@@ -59,6 +59,11 @@
     position: absolute; left: 0; top: 0;
     pointer-events: none;
   }
+  .views { display: flex; align-items: flex-start; }
+  .view { position: relative; flex: 1 1 0; min-width: 0; line-height: 0; }
+  .mapview { border-left: 1px solid var(--line); background: #0b0d10; }
+  #map { display: block; width: 100%; height: auto; cursor: crosshair; }
+  @media (max-width: 860px) { .views { flex-direction: column; } .mapview { border-left: 0; border-top: 1px solid var(--line); } }
 
   .hud {
     position: absolute; left: 12px; bottom: 12px; right: 12px;
@@ -147,8 +152,10 @@
   </header>
 
   <div class="stage">
-    <img id="cam" src="/stream" alt="field view">
-    <canvas id="overlay"></canvas>
+    <div class="views">
+      <div class="view"><img id="cam" src="/stream" alt="field view"><canvas id="overlay"></canvas></div>
+      <div class="view mapview"><canvas id="map"></canvas></div>
+    </div>
     <div class="timer" id="timer">90.0</div>
     <div class="hud">
       <span>X <b id="px">—</b></span><span class="sep">|</span>
@@ -414,6 +421,161 @@ function undoPoint() {
 
 window.addEventListener('resize', drawOverlay);
 
+const FX = 1829, FY = 1219, D2R = Math.PI / 180;
+const MAP_CENTERS = [
+  {x: 610, y: 610, ramps: [0, 120, 240]},
+  {x: 1219, y: 610, ramps: [180, 60, 300]}
+];
+const MAP_CORNERS = [
+  {x: 305, y: 305, rot: 0}, {x: 305, y: 914, rot: 0},
+  {x: 1524, y: 305, rot: 60}, {x: 1524, y: 914, rot: 60}
+];
+const MAP_TILES = [
+  [610, 940], [665, 985], [610, 280], [665, 235],
+  [1219, 940], [1164, 985], [1219, 280], [1164, 235], [914, 610]
+];
+const HEX_IN = 102, RAMP_RUN = 102, CORNER_R = 203, BOT_MM = 152;
+
+let mapScale = 1, livePose = null, livePath = [];
+
+function mapHex(cx, cy, r, rot) {
+  const p = [];
+  for (let i = 0; i < 6; i++) {
+    const a = (rot + 30 + i * 60) * D2R;
+    p.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+  }
+  return p;
+}
+function mapTri(cx, cy, R, rot) {
+  const v = [0, 120, 240].map(a => {
+    const t = (a + rot) * D2R;
+    return [cx + R * Math.cos(t), cy + R * Math.sin(t)];
+  });
+  const k = 0.26, out = [];
+  for (let i = 0; i < 3; i++) {
+    const a = v[i], b = v[(i + 1) % 3];
+    out.push([a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k]);
+    out.push([a[0] + (b[0] - a[0]) * (1 - k), a[1] + (b[1] - a[1]) * (1 - k)]);
+  }
+  return out;
+}
+function mapRamp(c, nd) {
+  const n = nd * D2R, t = n + Math.PI / 2;
+  const half = (HEX_IN / Math.cos(30 * D2R)) * Math.sin(30 * D2R);
+  const bx = c.x + HEX_IN * Math.cos(n), by = c.y + HEX_IN * Math.sin(n);
+  const ox = bx + RAMP_RUN * Math.cos(n), oy = by + RAMP_RUN * Math.sin(n);
+  const sh = half * 0.78;
+  return [
+    [bx + half * Math.cos(t), by + half * Math.sin(t)],
+    [ox + sh * Math.cos(t), oy + sh * Math.sin(t)],
+    [ox - sh * Math.cos(t), oy - sh * Math.sin(t)],
+    [bx - half * Math.cos(t), by - half * Math.sin(t)]
+  ];
+}
+
+function fitMap() {
+  const cm = document.getElementById('map');
+  const w = cm.parentElement.clientWidth;
+  if (!w) return;
+  const dpr = window.devicePixelRatio || 1;
+  cm.width = Math.round(w * dpr);
+  cm.height = Math.round(w * (FY / FX) * dpr);
+  cm.style.height = Math.round(w * (FY / FX)) + 'px';
+  mapScale = (w * dpr) / FX;
+  drawMap();
+}
+
+function drawMap() {
+  const cm = document.getElementById('map');
+  const g = cm.getContext('2d');
+  const M = v => v * mapScale;
+  const poly = pts => {
+    g.beginPath();
+    g.moveTo(M(pts[0][0]), M(pts[0][1]));
+    for (let i = 1; i < pts.length; i++) g.lineTo(M(pts[i][0]), M(pts[i][1]));
+    g.closePath();
+  };
+
+  g.clearRect(0, 0, cm.width, cm.height);
+  g.fillStyle = '#12151a';
+  g.fillRect(0, 0, cm.width, cm.height);
+
+  g.strokeStyle = 'rgba(255,255,255,.14)';
+  g.lineWidth = Math.max(1, M(3));
+  g.setLineDash([M(22), M(16)]);
+  [610, 1219].forEach(x => { g.beginPath(); g.moveTo(M(x), 0); g.lineTo(M(x), M(FY)); g.stroke(); });
+  g.setLineDash([]);
+
+  MAP_CENTERS.forEach(c => c.ramps.forEach(n => {
+    poly(mapRamp(c, n));
+    g.fillStyle = 'rgba(255,170,60,.5)'; g.fill();
+  }));
+  MAP_CENTERS.forEach(c => {
+    poly(mapHex(c.x, c.y, HEX_IN / Math.cos(30 * D2R), 0));
+    g.fillStyle = '#39404b'; g.fill();
+  });
+  MAP_CORNERS.forEach(c => {
+    const p = mapTri(c.x, c.y, CORNER_R, c.rot);
+    poly(p); g.fillStyle = '#39404b'; g.fill();
+    for (let i = 0; i < 6; i += 2) {
+      const a = p[i], b = p[(i + 1) % 6];
+      g.beginPath(); g.moveTo(M(a[0]), M(a[1])); g.lineTo(M(b[0]), M(b[1]));
+      g.strokeStyle = 'rgba(255,170,60,.6)'; g.lineWidth = Math.max(2, M(10)); g.stroke();
+    }
+  });
+  MAP_TILES.forEach(([x, y]) => {
+    poly(mapHex(x, y, 58, 0));
+    g.fillStyle = 'rgba(60,190,150,.55)'; g.fill();
+  });
+
+  if (livePath.length > 1) {
+    g.beginPath();
+    g.moveTo(M(livePath[0][0]), M(livePath[0][1]));
+    for (let i = 1; i < livePath.length; i++) g.lineTo(M(livePath[i][0]), M(livePath[i][1]));
+    g.strokeStyle = '#ffaa3c'; g.lineWidth = Math.max(2, M(8));
+    g.lineJoin = 'round'; g.lineCap = 'round'; g.stroke();
+    livePath.forEach(p => {
+      g.beginPath(); g.arc(M(p[0]), M(p[1]), Math.max(3, M(20)), 0, 7);
+      g.fillStyle = '#ffaa3c'; g.fill();
+    });
+  }
+
+  if (livePose) {
+    const [x, y, h] = livePose;
+    g.save();
+    g.translate(M(x), M(y));
+    g.rotate(h * D2R);
+    const hh = M(BOT_MM / 2);
+    g.fillStyle = 'rgba(80,160,235,.3)';
+    g.strokeStyle = '#4d9ae8'; g.lineWidth = Math.max(1, M(7));
+    g.beginPath(); g.rect(-hh, -hh, hh * 2, hh * 2); g.fill(); g.stroke();
+    g.beginPath();
+    g.moveTo(hh * 0.95, 0); g.lineTo(hh * 0.3, -hh * 0.45); g.lineTo(hh * 0.3, hh * 0.45);
+    g.closePath(); g.fillStyle = '#4d9ae8'; g.fill();
+    g.restore();
+  } else {
+    g.fillStyle = 'rgba(255,255,255,.35)';
+    g.font = `${Math.max(11, M(60))}px system-ui, sans-serif`;
+    g.textAlign = 'center';
+    g.fillText('no tag', M(FX / 2), M(FY / 2));
+    g.textAlign = 'start';
+  }
+}
+
+document.getElementById('map').addEventListener('click', (e) => {
+  const cm = document.getElementById('map');
+  const r = cm.getBoundingClientRect();
+  const dpr = cm.width / r.width;
+  const fx = ((e.clientX - r.left) * dpr) / mapScale;
+  const fy = ((e.clientY - r.top) * dpr) / mapScale;
+  selected = null;
+  markSelected();
+  post('/api/goto_field', {x: fx, y: fy});
+});
+
+window.addEventListener('resize', fitMap);
+setTimeout(fitMap, 50);
+
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   const k = e.key.toLowerCase();
@@ -455,7 +617,10 @@ setInterval(async () => {
 
   tagPix = s.tag ? {x: s.tag[0], y: s.tag[1]} : null;
   frameSize = s.frame_size || null;
+  livePose = s.pose || null;
+  livePath = s.path || [];
   if (drawMode) drawOverlay();
+  drawMap();
 
   if (s.pose) {
     setDot('d-tag', 'ok', 't-tag', 'tag locked');

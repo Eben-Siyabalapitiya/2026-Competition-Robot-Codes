@@ -194,6 +194,8 @@ int16_t pathY[PATH_MAX];
 uint8_t pathCount     = 0;
 uint8_t pathIndex     = 0;
 bool    followingPath = false;
+bool    legTurning    = false;
+unsigned long pauseUntil = 0;
 
 unsigned long holdStartMs  = 0;
 unsigned long matchStartMs = 0;
@@ -206,6 +208,13 @@ const unsigned long CAPTURE_HOLD_MS = 3000;
 
 const float ARRIVE_TOL_MM     = 40.0f;
 const float WAYPOINT_TOL_MM   = 90.0f;
+const float TURN_SETTLE_DEG   = 3.0f;
+const float TURN_REDO_DEG     = 16.0f;
+const float TURN_SLOW_DEG     = 35.0f;
+const float TURN_MIN_SPEED    = 20.0f;
+
+const unsigned long SETTLE_MS   = 250;
+const unsigned long LEG_PAUSE_MS = 300;
 const float STAGING_TOL_MM    = 30.0f;
 const float ALIGN_TOL_DEG     = 4.0f;
 const float TURN_IN_PLACE_DEG = 25.0f;
@@ -224,6 +233,15 @@ float DistanceTo(int16_t x, int16_t y) {
   float dx = (float)x - (float)pose.x_mm;
   float dy = (float)y - (float)pose.y_mm;
   return sqrtf(dx * dx + dy * dy);
+}
+
+float TurnSpeedFor(float err) {
+  float mag = fabsf(err);
+  float sp = TURN_SPEED;
+  if (mag < TURN_SLOW_DEG) {
+    sp = TURN_MIN_SPEED + (TURN_SPEED - TURN_MIN_SPEED) * (mag / TURN_SLOW_DEG);
+  }
+  return err > 0 ? sp : -sp;
 }
 
 float BearingTo(int16_t x, int16_t y) {
@@ -283,6 +301,7 @@ bool FindDetour(int16_t gx, int16_t gy, int16_t &outX, int16_t &outY) {
 }
 
 void SetGoalWithDetour(int16_t gx, int16_t gy) {
+  legTurning = true;
   finalGoal.x_mm = gx;
   finalGoal.y_mm = gy;
 
@@ -307,6 +326,8 @@ void AbortToIdle(const char *why) {
   climbingTarget = false;
   hasDetour = false;
   followingPath = false;
+  legTurning = false;
+  pauseUntil = 0;
   EnterState(ST_IDLE);
 }
 
@@ -318,6 +339,8 @@ void Disable(const char *why) {
   climbingTarget = false;
   hasDetour = false;
   followingPath = false;
+  legTurning = false;
+  pauseUntil = 0;
   matchRunning = false;
   state = ST_DISABLED;
 }
@@ -352,6 +375,7 @@ void StartPathLeg() {
   climbingTarget = false;
   activeRamp = -1;
   hasDetour = false;
+  legTurning = true;
   goal.x_mm = pathX[pathIndex];
   goal.y_mm = pathY[pathIndex];
   Serial.printf("path leg %u/%u -> %d,%d\n", pathIndex + 1, pathCount, goal.x_mm, goal.y_mm);
@@ -370,6 +394,7 @@ void StartPathRun() {
 }
 
 void StartGotoTarget(uint8_t id) {
+  followingPath = false;
   if (id == TGT_CENTER_BLUE || id == TGT_CENTER_ORANGE) {
     const CenterPlatform &p = CENTER_PLATFORMS[id == TGT_CENTER_BLUE ? 0 : 1];
     activeRamp = ChooseRamp(p);
@@ -562,6 +587,11 @@ void loop() {
         SetDrive(0, 0);
         break;
       }
+      if (millis() < pauseUntil) {
+        SetDrive(0, 0);
+        break;
+      }
+
       bool lastLeg = !followingPath || (pathIndex + 1 >= pathCount);
       float dist = DistanceTo(goal.x_mm, goal.y_mm);
       float tol;
@@ -571,27 +601,43 @@ void loop() {
       else                      tol = ARRIVE_TOL_MM;
 
       if (dist < tol) {
+        SetDrive(0, 0);
         if (hasDetour) {
           SetGoalWithDetour(finalGoal.x_mm, finalGoal.y_mm);
+          pauseUntil = millis() + LEG_PAUSE_MS;
           break;
         }
         if (!lastLeg) {
           pathIndex++;
           StartPathLeg();
+          pauseUntil = millis() + LEG_PAUSE_MS;
           break;
         }
-        SetDrive(0, 0);
         followingPath = false;
         EnterState(climbingTarget ? ST_ALIGN : ST_HOLD);
         break;
       }
 
       float err = NormalizeDeg(BearingTo(goal.x_mm, goal.y_mm) - pose.heading_deg);
-      if (fabsf(err) > TURN_IN_PLACE_DEG) {
-        SetDrive(0, (err > 0 ? TURN_SPEED : -TURN_SPEED));
-      } else {
-        SetDrive(DRIVE_SPEED, constrain(HEADING_KP * err, -40.0f, 40.0f));
+
+      if (legTurning) {
+        if (fabsf(err) <= TURN_SETTLE_DEG) {
+          SetDrive(0, 0);
+          legTurning = false;
+          pauseUntil = millis() + SETTLE_MS;
+        } else {
+          SetDrive(0, TurnSpeedFor(err));
+        }
+        break;
       }
+
+      if (fabsf(err) > TURN_REDO_DEG) {
+        SetDrive(0, 0);
+        legTurning = true;
+        break;
+      }
+
+      SetDrive(DRIVE_SPEED, constrain(HEADING_KP * err, -40.0f, 40.0f));
       break;
     }
 
@@ -604,11 +650,23 @@ void loop() {
       float want = p.ramps[activeRamp].climb_heading;
       float err  = NormalizeDeg(want - pose.heading_deg);
 
+      if (millis() < pauseUntil) {
+        SetDrive(0, 0);
+        break;
+      }
+
       if (fabsf(err) < ALIGN_TOL_DEG) {
         SetDrive(0, 0);
+        if (!legTurning) {
+          legTurning = true;
+          pauseUntil = millis() + SETTLE_MS;
+          break;
+        }
+        legTurning = false;
         EnterState(ST_CLIMB);
       } else {
-        SetDrive(0, (err > 0 ? TURN_SPEED : -TURN_SPEED));
+        legTurning = false;
+        SetDrive(0, TurnSpeedFor(err));
       }
       break;
     }

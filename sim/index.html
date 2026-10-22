@@ -121,7 +121,9 @@ const FX = 1829, FY = 1219;
 const D2R = Math.PI / 180, R2D = 180 / Math.PI;
 const MAX_V = 620, MAX_W = 190;
 const DRIVE_SPEED = 55, TURN_SPEED = 45, HEADING_KP = 1.6;
-const TURN_IN_PLACE = 25, ARRIVE_TOL = 40, WAYPOINT_TOL = 90, HOLD_MS = 3000;
+const ARRIVE_TOL = 40, WAYPOINT_TOL = 90, HOLD_MS = 3000;
+const TURN_SETTLE = 3, TURN_REDO = 16, TURN_SLOW = 35, TURN_MIN = 20;
+const SETTLE_MS = 250, LEG_PAUSE_MS = 300;
 const ROBOT = 152, PATH_MAX = 16, HEX_IN = 102, RAMP_RUN = 102, CORNER_R = 203;
 const SNAP_LOCK = 5, SNAP_FREE = 9;
 
@@ -213,6 +215,7 @@ let side = 'blue';
 let placed = [], anchored = false, drawMode = false, cursor = null;
 let running = false, legIdx = 0, holdAt = 0, state = 'idle';
 let track = [], ghosts = [], t0 = 0, elapsed = 0, warn = '', snapped = null;
+let legTurning = false, pauseUntil = 0;
 
 function polyPath(poly) {
   ctx.beginPath();
@@ -412,6 +415,7 @@ document.getElementById('clear').onclick = () => {
 document.getElementById('reset').onclick = () => {
   bot = startPose(); track = []; ghosts = []; placed = []; anchored = false;
   running = false; state = 'idle'; elapsed = 0; warn = '';
+  legTurning = false; pauseUntil = 0;
   setDraw(false);
   say('Back at the starting square.');
   draw(); readout();
@@ -427,6 +431,7 @@ document.getElementById('run').onclick = () => {
   if (track.length > 1) ghosts.push(track);
   track = [[bot.x, bot.y]];
   legIdx = 1; running = true; state = 'drive'; warn = '';
+  legTurning = true; pauseUntil = 0;
   elapsed = 0; t0 = performance.now();
   say('Running.');
   readout();
@@ -463,17 +468,24 @@ function loop(now) {
 
   if (running) {
     elapsed = (now - t0) / 1000;
-    if (state === 'drive') {
+    if (state === 'drive' && now >= pauseUntil) {
       const g = placed[legIdx];
       const dist = Math.hypot(g[0] - bot.x, g[1] - bot.y);
       const lastLeg = legIdx >= placed.length - 1;
       if (dist < (lastLeg ? ARRIVE_TOL : WAYPOINT_TOL)) {
         if (lastLeg) { state = 'hold'; holdAt = now; }
-        else legIdx++;
+        else { legIdx++; legTurning = true; pauseUntil = now + LEG_PAUSE_MS; }
       } else {
         const err = norm(Math.atan2(g[1] - bot.y, g[0] - bot.x) * R2D - bot.h);
-        if (Math.abs(err) > TURN_IN_PLACE) {
-          bot.h = norm(bot.h + Math.sign(err) * (TURN_SPEED / 100) * MAX_W * dt);
+        if (legTurning) {
+          if (Math.abs(err) <= TURN_SETTLE) { legTurning = false; pauseUntil = now + SETTLE_MS; }
+          else {
+            const mag = Math.abs(err);
+            const sp = mag < TURN_SLOW ? TURN_MIN + (TURN_SPEED - TURN_MIN) * (mag / TURN_SLOW) : TURN_SPEED;
+            bot.h = norm(bot.h + Math.sign(err) * (sp / 100) * MAX_W * dt);
+          }
+        } else if (Math.abs(err) > TURN_REDO) {
+          legTurning = true;
         } else {
           const turn = Math.max(-40, Math.min(40, HEADING_KP * err));
           bot.h = norm(bot.h + (turn / 100) * MAX_W * dt);

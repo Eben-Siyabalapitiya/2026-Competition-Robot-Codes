@@ -119,10 +119,26 @@ void SetDrive(float forward, float turn) {
   MotorOutput[6].write(currentLeftOut);
 }
 
+const int TRIM_7  = -7;
+const int TRIM_8  = 0;
+const int TRIM_9  = 0;
+const int TRIM_10 = 0;
+const int ARM_HOME     = 90;
+const int SUPPORT_HOME = 3;
+
+void HomeServos() {
+  MotorOutput[7].write(constrain(ARM_HOME + TRIM_7, 0, 180));
+  MotorOutput[8].write(constrain((180 - ARM_HOME) + TRIM_8, 0, 180));
+  MotorOutput[9].write(constrain((180 - SUPPORT_HOME) + TRIM_9, 0, 180));
+  MotorOutput[10].write(constrain(SUPPORT_HOME + TRIM_10, 0, 180));
+}
+
 void StopAll() {
   currentLeftOut = 90;
   currentRightOut = 90;
-  for (int i = 1; i <= 12; i++) MotorOutput[i].write(90);
+  for (int i = 1; i <= 6; i++) MotorOutput[i].write(90);
+  MotorOutput[12].write(90);
+  HomeServos();
 }
 
 // !! VERIFY EVERY NUMBER BELOW AGAINST THE ONSHAPE ARENA CAD !!

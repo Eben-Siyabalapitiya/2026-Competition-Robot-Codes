@@ -464,7 +464,8 @@ document.getElementById('cam').addEventListener('mousemove', (e) => {
 
 async function sendPath() {
   if (placed.length < 2) return;
-  await post('/api/path', {points: placed.slice(1)});
+  const pts = placed.slice(1).map(p => ({x: p.x, y: p.y}));
+  await post('/api/path', {points: pts});
 }
 
 function setDrawMode(on) {

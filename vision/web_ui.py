@@ -423,8 +423,8 @@ def path_set():
     if not ctl.fmap.ready:
         return jsonify({"message": "calibrate first"})
     raw = request.json.get("points", [])
-    if len(raw) < 2:
-        return jsonify({"message": "draw a path with at least two points"})
+    if len(raw) < 1:
+        return jsonify({"message": "draw a line first"})
     pts = []
     for p in raw:
         fx, fy = ctl.fmap.to_field((float(p["x"]), float(p["y"])))
@@ -435,8 +435,8 @@ def path_set():
     if len(pts) > PATH_MAX:
         return jsonify({"message": f"path too complex, {len(pts)} points but the limit is {PATH_MAX}"})
     ctl.set_path(pts)
-    ctl.status = f"path loaded, {len(pts)} points"
-    return jsonify({"message": f"path loaded, {len(pts)} points", "count": len(pts)})
+    ctl.status = f"path loaded, {len(pts)} point" + ("s" if len(pts) != 1 else "") + ""
+    return jsonify({"message": f"path loaded, {len(pts)} point" + ("s" if len(pts) != 1 else "") + "", "count": len(pts)})
 
 @app.route("/api/path/run", methods=["POST"])
 def path_run():

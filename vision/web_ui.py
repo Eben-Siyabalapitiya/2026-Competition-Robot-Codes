@@ -421,8 +421,8 @@ def zero():
 def main():
     global ctl
     ap = argparse.ArgumentParser()
-    ap.add_argument("--camera", type=int, default=0)
-    ap.add_argument("--port", default=None, help="dongle COM port, e.g. COM5")
+    ap.add_argument("--camera", type=int, default=1)
+    ap.add_argument("--port", default="COM6", help="dongle COM port, e.g. COM6")
     ap.add_argument("--tag-id", type=int, default=None)
     ap.add_argument("--family", default="tag36h11")
     ap.add_argument("--width", type=int, default=1280)

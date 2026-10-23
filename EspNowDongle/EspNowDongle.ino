@@ -1,7 +1,7 @@
 #include <WiFi.h>
 #include <esp_now.h>
 
-const char *ROBOT_MAC_STR = "AA:BB:CC:DD:EE:FF";
+const char *ROBOT_MAC_STR = "A4:F0:0F:EF:BB:F0";
 
 #define STATUS_LED 2
 

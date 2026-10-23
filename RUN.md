@@ -10,11 +10,20 @@ Open a terminal in `C:\Users\budhu\MiniBot\2026-Competition-Robot-Codes` and run
 C:\Users\budhu\AppData\Local\Programs\Python\Python312\python.exe vision\web_ui.py
 ```
 
-Once the dongle exists, add its port:
+That already uses the right defaults: **camera 1**, the USB camera, which negotiates
+1280x720 (the built-in laptop camera is camera 0 and is lower resolution), and
+**COM6**, the dongle.
+
+Those only change if you move the dongle to a different USB port or unplug the USB
+camera. Override either without editing anything:
 
 ```
-C:\Users\budhu\AppData\Local\Programs\Python\Python312\python.exe vision\web_ui.py --port COM5
+C:\Users\budhu\AppData\Local\Programs\Python\Python312\python.exe vision\web_ui.py --port COM7 --camera 0
 ```
+
+To find the dongle's port after moving it, run `MiniBot\shortcuts\List COM Ports.bat`
+and look for the `USB-SERIAL CH340` entry. The COM4 / COM5 / COM10 / COM11 ones are
+Bluetooth and are always present.
 
 Takes 10-20 seconds while the camera starts, then prints `open http://localhost:8000`.
 Open that in a browser. Ctrl+C in the terminal to stop, or the camera stays claimed.

@@ -49,6 +49,8 @@ app = Flask(__name__)
 CALIB_NAMES = ["Blue A", "Blue B", "Orange B", "Orange A"]
 
 PATH_EPSILON_MM = 55.0
+LINK_HZ = 50
+CMD_REPEATS = 8
 
 def thin_path(pts):
     if len(pts) < 3:
@@ -110,6 +112,24 @@ class Controller:
         self.running = True
 
         threading.Thread(target=self.worker, daemon=True).start()
+        threading.Thread(target=self.link_worker, daemon=True).start()
+
+    def link_worker(self):
+        """Feed the dongle at a steady rate, independent of the camera.
+
+        The radio drops packets, so rate is what keeps the robot's 500 ms
+        failsafe happy, and commands go out several times to survive the loss.
+        """
+        while self.running:
+            with self.lock:
+                pose = self.pose
+                item = self.pending.popleft() if self.pending else None
+            cmd, gx, gy, target = item if item else (CMD_NONE, 0, 0, 0)
+            try:
+                self.link.send(pose or (0, 0, 0), pose is not None, cmd, gx, gy, target)
+            except Exception as e:
+                print("link write failed:", e)
+            time.sleep(1.0 / LINK_HZ)
 
     def open_camera(self):
         cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
@@ -175,10 +195,8 @@ class Controller:
 
             cmd, gx, gy, target = pending if pending else (CMD_NONE, 0, 0, 0)
 
-            now = time.time()
-            if cmd != CMD_NONE or (now - last_send) > 0.02:
-                self.link.send(pose or (0, 0, 0), pose is not None, cmd, gx, gy, target)
-                last_send = now
+            if cmd != CMD_NONE:
+                self.pending.appendleft((cmd, gx, gy, target))
 
     def draw_field(self, frame):
         corners = [(0, 0), (FIELD_X_MM, 0), (FIELD_X_MM, FIELD_Y_MM), (0, FIELD_Y_MM)]
@@ -248,7 +266,8 @@ class Controller:
 
     def queue(self, cmd, gx=0, gy=0, target=0):
         with self.lock:
-            self.pending.append((cmd, gx, gy, target))
+            for _ in range(CMD_REPEATS):
+                self.pending.append((cmd, gx, gy, target))
 
     def set_path(self, pts):
         with self.lock:

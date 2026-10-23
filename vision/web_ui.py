@@ -450,8 +450,8 @@ def main():
     ap.add_argument("--family", default="tag36h11")
     ap.add_argument("--exposure", type=int, default=-4,
                     help="manual exposure, less negative is brighter; -1 is brightest")
-    ap.add_argument("--width", type=int, default=1280)
-    ap.add_argument("--height", type=int, default=720)
+    ap.add_argument("--width", type=int, default=640)
+    ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--http-port", type=int, default=8000)
     args = ap.parse_args()
 

@@ -10,9 +10,20 @@ Open a terminal in `C:\Users\budhu\MiniBot\2026-Competition-Robot-Codes` and run
 C:\Users\budhu\AppData\Local\Programs\Python\Python312\python.exe vision\web_ui.py
 ```
 
-That already uses the right defaults: **camera 1**, the USB camera, which negotiates
-1280x720 (the built-in laptop camera is camera 0 and is lower resolution), and
-**COM6**, the dongle.
+That already uses the right defaults: **camera 1** (the USB camera; the built-in
+laptop camera is camera 0), **COM6** (the dongle), **640x480** and **exposure -4**.
+
+### Why those camera settings
+
+The USB camera only offers YUY2, not MJPEG, so frame rate is bandwidth limited:
+1280x720 runs at 10 fps, 640x480 at 16 fps. The firmware stops driving when the pose
+is older than 300 ms, so 10 fps leaves only 3 frames of margin - hence 640x480.
+Higher frame rate costs tag detection range, so if the tag is missed at distance,
+try `--width 1280 --height 720`.
+
+Exposure is set manually because this camera's auto exposure measured *darker* than
+manual. Default -4. Less negative is brighter: `--exposure -2` for a dim room, -6 if
+it is blown out. If the picture looks almost black, this is the setting to change.
 
 Those only change if you move the dongle to a different USB port or unplug the USB
 camera. Override either without editing anything:

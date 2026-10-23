@@ -82,11 +82,12 @@ TARGET_POINTS = {
 GOAL_REACHED_MM = 60.0
 
 class Controller:
-    def __init__(self, camera, port, tag_id, family, width, height, exposure=-4):
+    def __init__(self, camera, port, tag_id, family, width, height, exposure=-4, tag_mm=127.0):
         self.camera_index = camera
         self.width = width
         self.height = height
         self.exposure = exposure
+        self.tag_mm = tag_mm
         self.cap = self.open_camera()
         self.detector = Detector(families=family, nthreads=4, quad_decimate=1.0)
         self.fmap = FieldMap()
@@ -97,6 +98,7 @@ class Controller:
         self.frame = None
         self.pose = None
         self.tag_center = None
+        self.tag_px = None
         self.enabled = False
         self.status = "not calibrated"
         self.calib_shots = [None] * len(CALIB_POINTS)
@@ -149,6 +151,11 @@ class Controller:
             if dets:
                 d = dets[0]
                 centre = (float(d.center[0]), float(d.center[1]))
+                cs = d.corners
+                tag_px = sum(
+                    float(np.hypot(cs[k][0] - cs[(k + 1) % 4][0], cs[k][1] - cs[(k + 1) % 4][1]))
+                    for k in range(4)
+                ) / 4.0
                 cv2.polylines(frame, [np.array(d.corners, dtype=np.int32)], True, (0, 255, 0), 2)
                 cv2.circle(frame, (int(centre[0]), int(centre[1])), 5, (0, 0, 255), -1)
                 if self.fmap.ready:
@@ -162,6 +169,7 @@ class Controller:
             with self.lock:
                 self.pose = pose
                 self.tag_center = centre
+                self.tag_px = tag_px
                 self.frame = frame
                 pending = self.pending.popleft() if self.pending else None
 
@@ -265,6 +273,23 @@ class Controller:
             self.status = "calibrated"
             return True, "calibrated"
         return False, "those four points do not form a valid field, move one"
+
+    def quick_calibrate(self):
+        with self.lock:
+            centre = self.tag_center
+            px = self.tag_px
+        if centre is None or not px:
+            return False, "no tag visible - point the camera at the tag first"
+        mm_per_px = self.tag_mm / px
+        s = mm_per_px
+        tx = (FIELD_X_MM / 2.0) - s * centre[0]
+        ty = (FIELD_Y_MM / 2.0) + s * centre[1]
+        H = np.array([[s, 0.0, tx], [0.0, -s, ty], [0.0, 0.0, 1.0]])
+        self.fmap.H = H
+        self.fmap.H_inv = np.linalg.inv(H)
+        self.calib_shots = [None] * len(CALIB_POINTS)
+        self.status = "quick calibrated from the tag"
+        return True, f"scale set from the tag: {mm_per_px:.2f} mm per pixel"
 
     def clear_calib_point(self, index):
         if 0 <= index < len(CALIB_POINTS):
@@ -442,6 +467,12 @@ def calib_set():
     ctl.status = msg
     return jsonify({"message": msg, "ok": ok})
 
+@app.route("/api/calib/quick", methods=["POST"])
+def calib_quick():
+    ok, msg = ctl.quick_calibrate()
+    ctl.status = msg
+    return jsonify({"message": msg, "ok": ok})
+
 @app.route("/api/calib/clear_point", methods=["POST"])
 def calib_clear_point():
     i = int(request.json["index"])
@@ -467,6 +498,8 @@ def main():
     ap.add_argument("--port", default="COM6", help="dongle COM port, e.g. COM6")
     ap.add_argument("--tag-id", type=int, default=None)
     ap.add_argument("--family", default="tag36h11")
+    ap.add_argument("--tag-mm", type=float, default=127.0,
+                    help="printed tag size in mm across the black border; 5 in = 127")
     ap.add_argument("--exposure", type=int, default=-4,
                     help="manual exposure, less negative is brighter; -1 is brightest")
     ap.add_argument("--width", type=int, default=640)
@@ -474,7 +507,7 @@ def main():
     ap.add_argument("--http-port", type=int, default=8000)
     args = ap.parse_args()
 
-    ctl = Controller(args.camera, args.port, args.tag_id, args.family, args.width, args.height, args.exposure)
+    ctl = Controller(args.camera, args.port, args.tag_id, args.family, args.width, args.height, args.exposure, args.tag_mm)
     print(f"\n  open http://localhost:{args.http_port}\n")
     app.run(host="0.0.0.0", port=args.http_port, threaded=True)
 

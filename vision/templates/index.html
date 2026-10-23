@@ -173,7 +173,9 @@
     <div class="card">
       <h2>1 · Calibrate</h2>
       <div class="stack">
-        <p class="hint">Pick a corner, then click it in the camera view.</p>
+        <button class="primary" onclick="post('/api/calib/quick')">Quick calibrate from tag</button>
+        <p class="hint">For bench testing: sets scale from the printed tag, no field needed.
+          For the real field use the four corners below.</p>
         <div class="pair">
           <button class="blue cal" data-c="0" onclick="armCalib(0)">Blue A</button>
           <button class="blue cal" data-c="1" onclick="armCalib(1)">Blue B</button>

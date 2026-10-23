@@ -86,6 +86,8 @@ class Link:
 
     def __init__(self, port, baud=921600):
         self.seq = 0
+        self.sent = 0
+        self.last_send = 0.0
         self.ser = None
         if port:
             try:
@@ -122,6 +124,8 @@ class Link:
         )
         body = body[:-1] + bytes([checksum(body[:-1])])
         self.ser.write(b"\xAB\xCD" + body)
+        self.sent += 1
+        self.last_send = time.time()
 
     def close(self):
         if self.ser:

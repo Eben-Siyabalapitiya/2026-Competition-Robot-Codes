@@ -366,6 +366,8 @@ def state():
         ],
         "path": path,
         "field": [FIELD_X_MM, FIELD_Y_MM],
+        "link_open": ctl.link.ser is not None,
+        "link_sent": ctl.link.sent,
     })
 
 

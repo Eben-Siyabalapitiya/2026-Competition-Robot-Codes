@@ -80,10 +80,12 @@ TARGET_POINTS = {
 GOAL_REACHED_MM = 60.0
 
 class Controller:
-    def __init__(self, camera, port, tag_id, family, width, height):
-        self.cap = cv2.VideoCapture(camera, cv2.CAP_DSHOW)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    def __init__(self, camera, port, tag_id, family, width, height, exposure=-4):
+        self.camera_index = camera
+        self.width = width
+        self.height = height
+        self.exposure = exposure
+        self.cap = self.open_camera()
         self.detector = Detector(families=family, nthreads=4, quad_decimate=1.0)
         self.fmap = FieldMap()
         self.link = Link(port)
@@ -105,13 +107,34 @@ class Controller:
 
         threading.Thread(target=self.worker, daemon=True).start()
 
+    def open_camera(self):
+        cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        if self.exposure is not None:
+            cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
+            cap.set(cv2.CAP_PROP_EXPOSURE, self.exposure)
+        return cap
+
     def worker(self):
         last_send = 0.0
+        misses = 0
         while self.running:
             ok, frame = self.cap.read()
             if not ok:
+                misses += 1
+                if misses >= 30:
+                    print("camera stalled, reopening")
+                    try:
+                        self.cap.release()
+                    except Exception:
+                        pass
+                    time.sleep(0.5)
+                    self.cap = self.open_camera()
+                    misses = 0
                 time.sleep(0.01)
                 continue
+            misses = 0
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             dets = [
@@ -425,12 +448,14 @@ def main():
     ap.add_argument("--port", default="COM6", help="dongle COM port, e.g. COM6")
     ap.add_argument("--tag-id", type=int, default=None)
     ap.add_argument("--family", default="tag36h11")
+    ap.add_argument("--exposure", type=int, default=-4,
+                    help="manual exposure, less negative is brighter; -1 is brightest")
     ap.add_argument("--width", type=int, default=1280)
     ap.add_argument("--height", type=int, default=720)
     ap.add_argument("--http-port", type=int, default=8000)
     args = ap.parse_args()
 
-    ctl = Controller(args.camera, args.port, args.tag_id, args.family, args.width, args.height)
+    ctl = Controller(args.camera, args.port, args.tag_id, args.family, args.width, args.height, args.exposure)
     print(f"\n  open http://localhost:{args.http_port}\n")
     app.run(host="0.0.0.0", port=args.http_port, threaded=True)
 

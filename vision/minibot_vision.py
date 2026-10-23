@@ -88,9 +88,15 @@ class Link:
         self.seq = 0
         self.ser = None
         if port:
-            self.ser = serial.Serial(port, baud, timeout=0)
-            time.sleep(2.0)
-            print(f"dongle open on {port}")
+            try:
+                self.ser = serial.Serial(port, baud, timeout=0)
+                time.sleep(2.0)
+                print(f"dongle open on {port}")
+            except serial.SerialException as e:
+                print(f"could not open {port}: {e}")
+                print("carrying on with vision only - nothing will reach the robot.")
+                print("usually this means another copy of this page is already running,")
+                print("or the Arduino Serial Monitor has the port open.")
         else:
             print("no --port given, running vision only (nothing will be sent)")
 

@@ -84,7 +84,7 @@ def checksum(data: bytes) -> int:
 class Link:
     """Serial link to the ESP-NOW dongle."""
 
-    def __init__(self, port, baud=921600):
+    def __init__(self, port, baud=921600, label='dongle'):
         self.seq = 0
         self.sent = 0
         self.last_send = 0.0
@@ -93,7 +93,7 @@ class Link:
             try:
                 self.ser = serial.Serial(port, baud, timeout=0)
                 time.sleep(2.0)
-                print(f"dongle open on {port}")
+                print(f"{label} open on {port} at {baud}")
             except serial.SerialException as e:
                 print(f"could not open {port}: {e}")
                 print("carrying on with vision only - nothing will reach the robot.")

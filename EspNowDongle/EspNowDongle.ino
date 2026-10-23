@@ -1,9 +1,11 @@
 #include <WiFi.h>
 #include <esp_now.h>
+#include <esp_wifi.h>
 
 const char *ROBOT_MAC_STR = "A4:F0:0F:EF:BB:F0";
 
 #define STATUS_LED 2
+#define ESPNOW_CHANNEL 1
 
 #pragma pack(push, 1)
 struct LinkPacket {
@@ -52,6 +54,8 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
+  WiFi.setSleep(false);
+  esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
 
   Serial.println();
   Serial.print("# dongle MAC  ");
@@ -77,7 +81,7 @@ void setup() {
 
   esp_now_peer_info_t peer = {};
   memcpy(peer.peer_addr, robotMac, 6);
-  peer.channel = 0;
+  peer.channel = ESPNOW_CHANNEL;
   peer.encrypt = false;
 
   if (esp_now_add_peer(&peer) != ESP_OK) {

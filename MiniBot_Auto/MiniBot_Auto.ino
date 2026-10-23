@@ -5,6 +5,9 @@
 #include <FastLED.h>
 #include <WiFi.h>
 #include <esp_now.h>
+#include <esp_wifi.h>
+
+#define ESPNOW_CHANNEL 1
 
 const uint8_t IO_PINS[13] = { 0, 32, 25, 26, 27, 14, 12, 13, 15, 2, 4, 22, 21 };
 
@@ -165,6 +168,38 @@ uint8_t LinkChecksum(const uint8_t *buf, size_t len) {
   return c;
 }
 
+uint8_t serBuf[sizeof(LinkPacket)];
+int     serFill  = 0;
+int     serState = 0;
+
+void AcceptPacket(const LinkPacket &p) {
+  if (p.magic != LINK_MAGIC || p.version != LINK_VERSION) return;
+  if (LinkChecksum((const uint8_t *)&p, sizeof(p) - 1) != p.checksum) return;
+  rxPacket = p;
+  linkPacketReady = true;
+}
+
+void PollSerialLink() {
+  while (Serial.available()) {
+    uint8_t b = Serial.read();
+    if (serState == 0) {
+      if (b == 0xAB) serState = 1;
+    } else if (serState == 1) {
+      serState = (b == 0xCD) ? 2 : 0;
+      serFill = 0;
+    } else {
+      serBuf[serFill++] = b;
+      if (serFill == (int)sizeof(LinkPacket)) {
+        LinkPacket p;
+        memcpy(&p, serBuf, sizeof(p));
+        serState = 0;
+        serFill = 0;
+        AcceptPacket(p);
+      }
+    }
+  }
+}
+
 void OnEspNowRecv(const uint8_t *mac, const uint8_t *data, int len) {
   if (len != (int)sizeof(LinkPacket)) return;
 
@@ -174,8 +209,7 @@ void OnEspNowRecv(const uint8_t *mac, const uint8_t *data, int len) {
   if (p.magic != LINK_MAGIC || p.version != LINK_VERSION) return;
   if (LinkChecksum((const uint8_t *)&p, sizeof(p) - 1) != p.checksum) return;
 
-  rxPacket = p;
-  linkPacketReady = true;
+  AcceptPacket(p);
 }
 
 AutoState state = ST_DISABLED;
@@ -202,7 +236,7 @@ unsigned long matchStartMs = 0;
 bool          matchRunning = false;
 
 const unsigned long POSE_TIMEOUT_MS = 300;
-const unsigned long LINK_TIMEOUT_MS = 500;
+const unsigned long LINK_TIMEOUT_MS = 900;
 const unsigned long MATCH_LIMIT_MS  = 90000;
 const unsigned long CAPTURE_HOLD_MS = 3000;
 
@@ -517,6 +551,8 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
+  WiFi.setSleep(false);
+  esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
   Serial.print("robot MAC (put this in the dongle sketch): ");
   Serial.println(WiFi.macAddress());
 
@@ -533,6 +569,7 @@ void setup() {
 
 void loop() {
   esp_task_wdt_reset();
+  PollSerialLink();
 
   battVoltage = (analogRead(VIN_SENSE) * VOLT_SLOPE) + VOLT_OFFSET;
   batteryWarn = battVoltage < BATT_WARN_V;

@@ -46,6 +46,8 @@ from minibot_vision import (
 
 app = Flask(__name__)
 
+CALIB_NAMES = ["Blue A", "Blue B", "Orange B", "Orange A"]
+
 PATH_EPSILON_MM = 55.0
 
 def thin_path(pts):
@@ -97,7 +99,7 @@ class Controller:
         self.tag_center = None
         self.enabled = False
         self.status = "not calibrated"
-        self.calib_shots = []
+        self.calib_shots = [None] * len(CALIB_POINTS)
 
         self.pending = deque()
         self.path = []
@@ -252,27 +254,29 @@ class Controller:
             self.path = []
         self.queue(CMD_PATH_CLEAR)
 
-    def capture_calib(self):
-        with self.lock:
-            centre = self.tag_center
-        if centre is None:
-            return False, "no tag visible"
-        if len(self.calib_shots) >= len(CALIB_POINTS):
-            return False, "already have four points"
-
-        self.calib_shots.append(centre)
-        n = len(self.calib_shots)
-        if n < len(CALIB_POINTS):
-            return True, f"captured {n}/4, move to {CALIB_POINTS[n]}"
-
+    def set_calib(self, index, point):
+        if not (0 <= index < len(CALIB_POINTS)):
+            return False, "no such calibration point"
+        self.calib_shots[index] = (float(point[0]), float(point[1]))
+        done = [p for p in self.calib_shots if p is not None]
+        if len(done) < len(CALIB_POINTS):
+            return True, f"{CALIB_NAMES[index]} set, {len(done)}/{len(CALIB_POINTS)} placed"
         if self.fmap.solve(self.calib_shots, CALIB_POINTS):
             self.status = "calibrated"
             return True, "calibrated"
-        self.calib_shots = []
-        return False, "homography failed, start again"
+        return False, "those four points do not form a valid field, move one"
+
+    def clear_calib_point(self, index):
+        if 0 <= index < len(CALIB_POINTS):
+            self.calib_shots[index] = None
+            self.fmap.H = None
+            self.fmap.H_inv = None
+            self.status = "not calibrated"
+            return True, f"{CALIB_NAMES[index]} cleared"
+        return False, "no such calibration point"
 
     def reset_calib(self):
-        self.calib_shots = []
+        self.calib_shots = [None] * len(CALIB_POINTS)
         self.fmap.H = None
         self.fmap.H_inv = None
         self.status = "not calibrated"
@@ -329,7 +333,12 @@ def state():
         "enabled": ctl.enabled,
         "status": ctl.status,
         "calibrated": ctl.fmap.ready,
-        "calib_points": len(ctl.calib_shots),
+        "calib_points": len([p for p in ctl.calib_shots if p is not None]),
+        "calib": [
+            {"name": CALIB_NAMES[i], "field": list(CALIB_POINTS[i]),
+             "image": list(ctl.calib_shots[i]) if ctl.calib_shots[i] else None}
+            for i in range(len(CALIB_POINTS))
+        ],
         "path": path,
         "field": [FIELD_X_MM, FIELD_Y_MM],
     })
@@ -424,9 +433,19 @@ def path_clear():
     ctl.status = "path cleared"
     return jsonify({"message": "path cleared"})
 
-@app.route("/api/calib/capture", methods=["POST"])
-def calib_capture():
-    ok, msg = ctl.capture_calib()
+@app.route("/api/calib/set", methods=["POST"])
+def calib_set():
+    i = int(request.json["index"])
+    x = float(request.json["x"])
+    y = float(request.json["y"])
+    ok, msg = ctl.set_calib(i, (x, y))
+    ctl.status = msg
+    return jsonify({"message": msg, "ok": ok})
+
+@app.route("/api/calib/clear_point", methods=["POST"])
+def calib_clear_point():
+    i = int(request.json["index"])
+    ok, msg = ctl.clear_calib_point(i)
     ctl.status = msg
     return jsonify({"message": msg, "ok": ok})
 

@@ -59,6 +59,9 @@
     position: absolute; left: 0; top: 0;
     pointer-events: none;
   }
+  button.cal.armed { outline: 2px solid #3fbd94; outline-offset: 1px; }
+  button.cal.done::after { content: " ●"; color: #3fbd94; }
+  .hint { font-size: 12px; color: var(--dim); margin: 0 0 4px; line-height: 1.5; }
   .views { display: flex; align-items: flex-start; }
   .view { position: relative; flex: 1 1 0; min-width: 0; line-height: 0; }
   .mapview { border-left: 1px solid var(--line); background: #0b0d10; }
@@ -168,13 +171,29 @@
 
   <div class="grid">
     <div class="card">
-      <h2>Match</h2>
+      <h2>1 · Calibrate</h2>
+      <div class="stack">
+        <p class="hint">Pick a corner, then click it in the camera view.</p>
+        <div class="pair">
+          <button class="blue cal" data-c="0" onclick="armCalib(0)">Blue A</button>
+          <button class="blue cal" data-c="1" onclick="armCalib(1)">Blue B</button>
+        </div>
+        <div class="pair">
+          <button class="orange cal" data-c="3" onclick="armCalib(3)">Orange A</button>
+          <button class="orange cal" data-c="2" onclick="armCalib(2)">Orange B</button>
+        </div>
+        <button onclick="post('/api/calib/reset')">Clear all<kbd id="caln">0/4</kbd></button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>2 · Match</h2>
       <div class="stack">
         <button class="primary" onclick="enable()">Enable<kbd>space</kbd></button>
         <button class="danger" onclick="disable()">Disable<kbd>D</kbd></button>
-        <button onclick="cancelGoal()">Cancel goal<kbd>C</kbd></button>
         <button id="drawbtn" onclick="toggleDraw()">Draw path<kbd>P</kbd></button>
         <button class="primary" onclick="runPath()">Run path<kbd>R</kbd></button>
+        <button onclick="cancelGoal()">Cancel<kbd>C</kbd></button>
         <button onclick="clearPath()">Clear path</button>
       </div>
     </div>
@@ -196,17 +215,24 @@
     </div>
 
     <div class="card">
-      <h2>Setup</h2>
+      <h2>3 · Platforms</h2>
       <div class="stack">
-        <button onclick="post('/api/calib/capture')">Capture point<kbd id="caln">0/4</kbd></button>
-        <button onclick="post('/api/calib/reset')">Reset calibration</button>
+        <div class="pair">
+          <button class="blue" data-t="1" onclick="target(1)">Blue A<kbd>1</kbd></button>
+          <button class="blue" data-t="2" onclick="target(2)">Blue B<kbd>2</kbd></button>
+        </div>
+        <div class="pair">
+          <button class="orange" data-t="3" onclick="target(3)">Orange A<kbd>3</kbd></button>
+          <button class="orange" data-t="4" onclick="target(4)">Orange B<kbd>4</kbd></button>
+        </div>
+        <button class="blue" data-t="5" onclick="target(5)">Centre blue<kbd>5</kbd></button>
+        <button class="orange" data-t="6" onclick="target(6)">Centre orange<kbd>6</kbd></button>
         <button onclick="post('/api/zero')">Zero heading</button>
       </div>
     </div>
   </div>
 
   <div class="log" id="log">ready</div>
-  <p class="hint">Click anywhere on the field view to drive there. Calibration: stand the robot on each known point and press Capture, four times.</p>
 </div>
 
 <script>
@@ -291,6 +317,37 @@ function drawOverlay() {
   const g = c.getContext('2d');
   g.clearRect(0, 0, c.width, c.height);
 
+  calib.forEach((c, i) => {
+    if (!c.image) return;
+    const p = toScreen({x: c.image[0], y: c.image[1]});
+    g.beginPath();
+    g.arc(p.x, p.y, 7, 0, Math.PI * 2);
+    g.fillStyle = '#3fbd94';
+    g.fill();
+    g.strokeStyle = '#0b1016';
+    g.lineWidth = 2;
+    g.stroke();
+    g.beginPath();
+    g.moveTo(p.x - 13, p.y); g.lineTo(p.x - 9, p.y);
+    g.moveTo(p.x + 9, p.y);  g.lineTo(p.x + 13, p.y);
+    g.moveTo(p.x, p.y - 13); g.lineTo(p.x, p.y - 9);
+    g.moveTo(p.x, p.y + 9);  g.lineTo(p.x, p.y + 13);
+    g.strokeStyle = '#3fbd94';
+    g.lineWidth = 1.5;
+    g.stroke();
+    g.fillStyle = '#3fbd94';
+    g.font = '11px system-ui, sans-serif';
+    g.fillText(c.name, p.x + 12, p.y - 10);
+  });
+
+  if (armedCalib !== null) {
+    g.strokeStyle = '#3fbd94';
+    g.lineWidth = 2;
+    g.setLineDash([6, 4]);
+    g.strokeRect(1, 1, c.width - 2, c.height - 2);
+    g.setLineDash([]);
+  }
+
   if (drawMode && tagPix && !anchored) {
     const t = toScreen(tagPix);
     g.beginPath();
@@ -343,8 +400,35 @@ function drawOverlay() {
   });
 }
 
+let armedCalib = null;
+let calib = [];
+
+function armCalib(i) {
+  armedCalib = (armedCalib === i) ? null : i;
+  if (armedCalib !== null) setDrawMode(false);
+  markCalib();
+  say(armedCalib === null ? 'calibration point released'
+      : 'now click that corner platform in the camera view');
+}
+
+function markCalib() {
+  document.querySelectorAll('button.cal').forEach(b => {
+    const i = parseInt(b.dataset.c, 10);
+    b.classList.toggle('armed', armedCalib === i);
+    const got = calib[i] && calib[i].image;
+    b.classList.toggle('done', !!got);
+  });
+}
+
 document.getElementById('cam').addEventListener('click', (e) => {
   const p = camPoint(e);
+  if (armedCalib !== null) {
+    const i = armedCalib;
+    armedCalib = null;
+    markCalib();
+    post('/api/calib/set', {index: i, x: p.x, y: p.y});
+    return;
+  }
   if (!drawMode) {
     selected = null;
     markSelected();
@@ -608,7 +692,9 @@ setInterval(async () => {
   frameSize = s.frame_size || null;
   livePose = s.pose || null;
   livePath = s.path || [];
-  if (drawMode) drawOverlay();
+  calib = s.calib || [];
+  markCalib();
+  drawOverlay();
   drawMap();
 
   if (s.pose) {

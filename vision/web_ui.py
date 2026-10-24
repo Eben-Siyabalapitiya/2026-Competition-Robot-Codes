@@ -49,6 +49,13 @@ from bluetooth_link import BluetoothLink
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
+from voice_control import voice
+app.register_blueprint(voice)
+
+@app.get('/api/startup')
+def startup_status():
+    from startup_services import status
+    return jsonify(status())
 
 CALIB_NAMES = ["Blue A", "Blue B", "Orange B", "Orange A"]
 
@@ -587,6 +594,27 @@ def enable():
     ctl.queue(CMD_ENABLE)
     return jsonify({"message": "Enable requested"})
 
+@app.route('/api/lights', methods=['POST'])
+def lights():
+    from gemini_control import COLORS, EFFECTS
+    data = request.get_json(silent=True) or {}
+    color, effect = data.get('color'), data.get('effect')
+    if effect not in EFFECTS or color not in (*COLORS, 'status') or ((effect == 'status') != (color == 'status')):
+        return jsonify(message='Unsupported light setting'), 400
+    with ctl.lock:
+        if not ctl.link.enabled:
+            return jsonify(message='Enable first'), 409
+        if not ctl.link.telemetry.get('lights'):
+            return jsonify(message='Upload the light-control firmware first'), 409
+        if effect in ('snake', 'chase', 'rainbow', 'breathe') and not ctl.link.telemetry.get('light_patterns'):
+            return jsonify(message='Upload the light-pattern firmware first'), 409
+        if ctl.manual_token or ctl.pending or ctl.goal:
+            return jsonify(message='Wait until the robot is idle before changing lights'), 409
+        rgb = COLORS.get(color, (0, 0, 0))
+        command = {'solid': 10, 'blink': 11, 'status': 12, 'snake': 13, 'chase': 14, 'rainbow': 15, 'breathe': 16}[effect]
+        ctl.pending.append((command, *rgb))
+    return jsonify(ok=True, message='Light command queued; automatic colors return after 15 seconds')
+
 @app.route("/api/disable", methods=["POST"])
 def disable():
     ctl.enabled = False
@@ -733,6 +761,8 @@ def main():
     args = ap.parse_args()
 
     ctl = Controller(args.camera, args.port, args.tag_id, args.family, args.width, args.height, args.exposure, args.tag_mm)
+    from startup_services import start as start_services
+    start_services()
     print(f"\n  open http://localhost:{args.http_port}\n")
     app.run(host="127.0.0.1", port=args.http_port, threaded=True)
 

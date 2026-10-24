@@ -5,15 +5,11 @@
       "name": "MiniBot Bluetooth control page",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/vision/web_ui.py",
+      "program": "${workspaceFolder}/start.py",
       "console": "integratedTerminal",
-      "cwd": "${workspaceFolder}/vision",
+      "cwd": "${workspaceFolder}",
       "args": [],
-      "serverReadyAction": {
-        "pattern": "open (https?://\\S+)",
-        "uriFormat": "%s",
-        "action": "openExternally"
-      }
+      "python": "C:\\Users\\budhu\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
     },
     {
       "name": "Make AprilTag 5in",

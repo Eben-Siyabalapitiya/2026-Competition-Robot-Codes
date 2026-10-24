@@ -290,13 +290,14 @@ function markSelected() {
 }
 function enable() { post('/api/enable'); }
 function disable() {
+  window.dispatchEvent(new Event('voice-cancel'));
   stopManual();
   commandEpoch++;
   enabled = false; startedAt = null; selected = null;
   markSelected();
   post('/api/disable');
 }
-function cancelGoal() { selected = null; markSelected(); post('/api/cancel'); }
+function cancelGoal() { window.dispatchEvent(new Event('voice-cancel')); selected = null; markSelected(); post('/api/cancel'); }
 
 let zeroPicking = false;
 let drawMode = false;
@@ -335,6 +336,7 @@ for (const button of document.querySelectorAll('#manual-pad [data-direction]')) 
     event.preventDefault();
     if (!enabled) { say('Enable first.'); return; }
     if (manualToken) return;
+    window.dispatchEvent(new Event('voice-cancel'));
     zeroPicking = false;
     setDrawMode(false);
     manualToken = crypto.randomUUID();
@@ -566,6 +568,7 @@ function toggleDraw() {
 }
 
 async function runPath() {
+  window.dispatchEvent(new Event('voice-cancel'));
   await stopManual();
   if (runPending) return;
   if (!livePose) {
@@ -795,7 +798,7 @@ setInterval(async () => {
   const robot = s.bluetooth.robot || {};
   if (s.bluetooth.port) document.getElementById('bt-port').value = s.bluetooth.port;
   const states = ['disabled', 'idle', 'driving', 'aligning', 'climbing', 'holding', 'done'];
-  const commands = ['none', 'destination', 'platform', 'cancel', 'enable', 'disable', 'clear line', 'add point', 'run line', 'manual'];
+  const commands = ['none', 'destination', 'platform', 'cancel', 'enable', 'disable', 'clear line', 'add point', 'run line', 'manual', 'lights', 'blink', 'status lights', 'snake', 'chase', 'rainbow', 'breathe'];
   document.getElementById('motor-status').textContent = robot.firmware
     ? `Robot: ${states[robot.state] || 'unknown'}${robot.turning ? ' / turning' : ''}. Forward ${robot.forward}%, turn ${robot.turn}%. Left ${robot.left_us} µs, right ${robot.right_us} µs. Last command: ${commands[robot.last_cmd] || robot.last_cmd}; ${robot.path_count} points. Pose ${robot.pose_fresh ? 'fresh' : 'missing'}. ${robot.attached === 63 ? 'All drive outputs attached.' : 'Drive output attachment problem.'} Reason: ${robot.reason}.`
     : 'Upload the motor-feedback firmware to see what the robot is commanding.';
@@ -844,6 +847,7 @@ setInterval(async () => {
 }, 300);
 
 async function zeroTag(resetFront=false) {
+  window.dispatchEvent(new Event('voice-cancel'));
   await stopManual();
   commandEpoch++;
   await post('/api/disable');
@@ -897,3 +901,4 @@ async function connectBluetooth() {
 refreshBluetoothPorts();
 
 </script>
+<script src="/static/voice.js"></script>

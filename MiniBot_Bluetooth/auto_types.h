@@ -58,6 +58,13 @@ enum LinkCmd : uint8_t {
   CMD_PATH_ADD   = 7,
   CMD_PATH_RUN   = 8,
   CMD_MANUAL     = 9,
+  CMD_LIGHTS     = 10,
+  CMD_BLINK      = 11,
+  CMD_LIGHT_RESET = 12,
+  CMD_SNAKE = 13,
+  CMD_CHASE = 14,
+  CMD_RAINBOW = 15,
+  CMD_BREATHE = 16,
 };
 
 #define PATH_MAX 16

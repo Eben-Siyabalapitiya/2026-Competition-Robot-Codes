@@ -1,4 +1,6 @@
 {
-  "python.defaultInterpreterPath": "C:\Users\ebene\AppData\Local\Programs\Python\Python312\python.exe",
-  "files.associations": { "*.ino": "cpp" }
+  "python.defaultInterpreterPath": "C:\\Users\\budhu\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+  "files.associations": {
+    "*.ino": "cpp"
+  }
 }

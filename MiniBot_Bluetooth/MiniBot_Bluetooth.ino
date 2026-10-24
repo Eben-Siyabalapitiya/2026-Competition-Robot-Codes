@@ -229,7 +229,8 @@ int     serState = 0;
 void AcceptPacket(const LinkPacket &p) {
   if (p.magic != LINK_MAGIC || p.version != LINK_VERSION) return;
   if (LinkChecksum((const uint8_t *)&p, sizeof(p) - 1) != p.checksum) return;
-  if (p.cmd > CMD_MANUAL || p.poseValid > 1 ||
+  if (p.cmd > CMD_BREATHE || p.poseValid > 1 ||
+      (((p.cmd == CMD_LIGHTS || p.cmd == CMD_BLINK) || (p.cmd >= CMD_SNAKE && p.cmd <= CMD_BREATHE)) && (p.gx_mm < 0 || p.gx_mm > 255 || p.gy_mm < 0 || p.gy_mm > 255)) ||
       (p.cmd == CMD_MANUAL && (abs(p.gx_mm) > 24 || abs(p.gy_mm) > 22)) ||
       (p.poseValid && (p.heading_cdeg < -18000 || p.heading_cdeg > 18000)) ||
       ((p.cmd == CMD_GOTO_XY || p.cmd == CMD_PATH_ADD) &&
@@ -526,10 +527,33 @@ void StartGotoTarget(uint8_t id) {
   }
 }
 
+CRGB requestedLight;
+unsigned long lightStartMs = 0;
+bool lightOverride = false;
+bool lightBlink = false;
+uint8_t lightPattern = CMD_LIGHTS;
+
 void HandleCommand(const LinkPacket &p) {
   lastCommand = p.cmd;
   commandCount++;
   switch (p.cmd) {
+    case CMD_LIGHT_RESET:
+      lightOverride = false;
+      break;
+    case CMD_LIGHTS:
+    case CMD_BLINK:
+    case CMD_SNAKE:
+    case CMD_CHASE:
+    case CMD_RAINBOW:
+    case CMD_BREATHE:
+      if (state != ST_DISABLED) {
+        requestedLight = CRGB(p.gx_mm, p.gy_mm, p.targetId);
+        lightStartMs = millis();
+        lightOverride = true;
+        lightBlink = p.cmd == CMD_BLINK;
+        lightPattern = p.cmd;
+      }
+      break;
     case CMD_ENABLE:
       if (state == ST_DISABLED) {
         lastReason = "enabled";
@@ -591,8 +615,34 @@ void HandleCommand(const LinkPacket &p) {
 
 void StatusLeds() {
   CRGB c = state == ST_DISABLED ? CRGB(255, 0, 0) : CRGB(0, 80, 255);
+  if (state == ST_DISABLED) lightOverride = false;
+  if (lightOverride && millis() - lightStartMs >= 15000) lightOverride = false;
+  if (lightOverride) {
+    c = requestedLight;
+    if (lightBlink && millis() - lightStartMs < 2000 && ((millis() - lightStartMs) / 250) % 2) c = CRGB::Black;
+  }
   static bool shown = false;
   static CRGB previous;
+  if (lightOverride && lightPattern >= CMD_SNAKE) {
+    const unsigned long elapsed = millis() - lightStartMs;
+    const int count = LED_COUNT + NUM_LEDS2;
+    for (int i = 0; i < count; i++) {
+      CRGB pixel = c;
+      if (lightPattern == CMD_RAINBOW) pixel = CHSV((elapsed / 15 + i * 256 / count) & 255, 255, 200);
+      if (lightPattern == CMD_BREATHE) pixel.nscale8(35 + (sin8(elapsed / 8) * 220UL / 255));
+      if (lightPattern == CMD_CHASE && (i + elapsed / 140) % 3 != 0) pixel = CRGB::Black;
+      if (lightPattern == CMD_SNAKE) {
+        int distance = ((int)(elapsed / 120) - i) % count;
+        if (distance < 0) distance += count;
+        if (distance >= 4) pixel = CRGB::Black;
+        else pixel.nscale8(255 - distance * 60);
+      }
+      if (i < LED_COUNT) leds[i] = pixel; else leds2[i - LED_COUNT] = pixel;
+    }
+    shown = false;
+    FastLED.show();
+    return;
+  }
   if (shown && c == previous) return;
   previous = c;
   shown = true;
@@ -866,7 +916,7 @@ void loop() {
     for (int i = 1; i <= 6; i++) if (MotorOutput[i].attached()) driveAttached |= (1 << (i - 1));
     float headingError = state == ST_DRIVE ? NormalizeDeg(BearingTo(goal.x_mm, goal.y_mm) - pose.heading_deg) : 0.0f;
     RobotBT.printf("{\"state\":%d,\"pose_fresh\":%s,\"battery\":%.2f,\"seq\":%u,\"remaining_ms\":%lu,"
-      "\"firmware\":\"bt-nav-8-manual\",\"manual\":%s,\"forward\":%.1f,\"turn\":%.1f,\"left_us\":%d,\"right_us\":%d,"
+      "\"firmware\":\"bt-nav-8-manual\",\"lights\":true,\"light_patterns\":true,\"manual\":%s,\"forward\":%.1f,\"turn\":%.1f,\"left_us\":%d,\"right_us\":%d,"
       "\"last_cmd\":%u,\"commands\":%lu,\"path_count\":%u,\"turning\":%s,\"heading_error\":%.1f,\"attached\":%u,\"reason\":\"%s\"}\n",
       (int)state, poseFresh ? "true" : "false", battVoltage, lastSeq,
       matchRunning ? (unsigned long)(MATCH_LIMIT_MS - min(now - matchStartMs, MATCH_LIMIT_MS)) : 0UL,

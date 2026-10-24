@@ -52,7 +52,7 @@
     overflow: hidden; line-height: 0;
   }
   #cam {
-    width: 100%; max-height: 74vh; object-fit: contain;
+    width: 100%; height: auto; max-height: 74vh; object-fit: contain;
     display: block; cursor: crosshair; background: #000;
   }
   #overlay {
@@ -93,7 +93,7 @@
   .timer.run { color: var(--green); }
   .timer.end { color: var(--red); }
 
-  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 14px; }
   @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
 
   .card {
@@ -154,9 +154,10 @@
     </div>
   </header>
 
+  <div id="setup-guide" role="status" style="display:none;padding:12px 16px;margin-bottom:12px;border:1px solid #388bfd;border-radius:10px;background:#10213a;color:#d9eaff;font-size:16px">Keep the tag visible, then press Zero tag.</div>
   <div class="stage">
     <div class="views">
-      <div class="view"><img id="cam" src="/stream" alt="field view"><canvas id="overlay"></canvas></div>
+      <div class="view"><img id="cam" src="/frame.jpg" width="640" height="480" alt="field view"><canvas id="overlay"></canvas><span id="preview-status" style="position:absolute;left:8px;top:8px;padding:6px;background:#111b;color:#ddd;line-height:1.3;pointer-events:none">Camera loading…</span></div>
       <div class="view mapview"><canvas id="map"></canvas></div>
     </div>
     <div class="timer" id="timer">90.0</div>
@@ -171,78 +172,95 @@
 
   <div class="grid">
     <div class="card">
-      <h2>1 · Calibrate</h2>
+      <h2>Bluetooth</h2>
       <div class="stack">
-        <button class="primary" onclick="post('/api/calib/quick')">Quick calibrate from tag</button>
-        <p class="hint">For bench testing: sets scale from the printed tag, no field needed.
-          For the real field use the four corners below.</p>
-        <div class="pair">
-          <button class="blue cal" data-c="0" onclick="armCalib(0)">Blue A</button>
-          <button class="blue cal" data-c="1" onclick="armCalib(1)">Blue B</button>
-        </div>
-        <div class="pair">
-          <button class="orange cal" data-c="3" onclick="armCalib(3)">Orange A</button>
-          <button class="orange cal" data-c="2" onclick="armCalib(2)">Orange B</button>
-        </div>
-        <button onclick="post('/api/calib/reset')">Clear all<kbd id="caln">0/4</kbd></button>
+        <select id="bt-port" aria-label="Bluetooth COM port"></select>
+        <button onclick="refreshBluetoothPorts()">Refresh</button>
+        <button onclick="connectBluetooth()">Connect</button>
+        <button onclick="post('/api/bluetooth/disconnect')">Disconnect</button>
+        <p id="bt-status" class="hint">Disconnected</p>
+        <p id="motor-status" style="display:none"></p>
       </div>
     </div>
-
     <div class="card">
-      <h2>2 · Match</h2>
+      <h2>Heading</h2>
       <div class="stack">
-        <button class="primary" onclick="enable()">Enable<kbd>space</kbd></button>
-        <button class="danger" onclick="disable()">Disable<kbd>D</kbd></button>
-        <button id="drawbtn" onclick="toggleDraw()">Draw path<kbd>P</kbd></button>
-        <button class="primary" onclick="runPath()">Run path<kbd>R</kbd></button>
-        <button onclick="cancelGoal()">Cancel<kbd>C</kbd></button>
-        <button onclick="clearPath()">Clear path</button>
+        <button class="primary" onclick="zeroTag()">Zero tag</button>
+        <button onclick="zeroTag(true)">Reset front</button>
+        <span id="caln" hidden></span>
       </div>
     </div>
-
     <div class="card">
-      <h2>Platforms</h2>
+      <h2>Draw & drive</h2>
       <div class="stack">
-        <div class="pair">
-          <button class="blue" data-t="1" onclick="target(1)">Corner A<kbd>1</kbd></button>
-          <button class="blue" data-t="2" onclick="target(2)">Corner B<kbd>2</kbd></button>
-        </div>
-        <button class="blue" data-t="5" onclick="target(5)">Centre blue<kbd>5</kbd></button>
-        <button class="orange" data-t="6" onclick="target(6)">Centre orange<kbd>6</kbd></button>
-        <div class="pair">
-          <button class="orange" data-t="3" onclick="target(3)">Corner A<kbd>3</kbd></button>
-          <button class="orange" data-t="4" onclick="target(4)">Corner B<kbd>4</kbd></button>
-        </div>
+        <button id="drawbtn" onclick="toggleDraw()">Draw line</button>
+        <button onclick="clearPath()">Clear line</button>
+        <button class="primary" onclick="runPath()">Run line</button>
+        <p id="drive-notice" role="status" style="color:#ffcc66;font-size:14px"></p>
       </div>
     </div>
-
     <div class="card">
-      <h2>3 · Platforms</h2>
+      <h2>Manual · hold</h2>
       <div class="stack">
-        <div class="pair">
-          <button class="blue" data-t="1" onclick="target(1)">Blue A<kbd>1</kbd></button>
-          <button class="blue" data-t="2" onclick="target(2)">Blue B<kbd>2</kbd></button>
+        <button class="primary" onclick="enable()">Enable</button>
+        <div id="manual-pad" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+          <button data-direction="forward" aria-label="Hold forward" style="grid-column:2">↑</button>
+          <button data-direction="left" aria-label="Hold turn left" style="grid-column:1">↶</button>
+          <button class="danger" onclick="disable()" aria-label="Stop and disable">STOP</button>
+          <button data-direction="right" aria-label="Hold turn right">↷</button>
+          <button data-direction="backward" aria-label="Hold backward" style="grid-column:2">↓</button>
         </div>
-        <div class="pair">
-          <button class="orange" data-t="3" onclick="target(3)">Orange A<kbd>3</kbd></button>
-          <button class="orange" data-t="4" onclick="target(4)">Orange B<kbd>4</kbd></button>
-        </div>
-        <button class="blue" data-t="5" onclick="target(5)">Centre blue<kbd>5</kbd></button>
-        <button class="orange" data-t="6" onclick="target(6)">Centre orange<kbd>6</kbd></button>
-        <button onclick="post('/api/zero')">Zero heading</button>
       </div>
     </div>
   </div>
 
-  <div class="log" id="log">ready</div>
+  <div class="log" id="log" style="display:none">ready</div>
 </div>
 
 <script>
+const previewImage = document.getElementById('cam');
+let previewUrl = null;
+async function refreshPreview() {
+  const abort = new AbortController();
+  const timeout = setTimeout(() => abort.abort(), 1500);
+  let candidate = null;
+  try {
+    const response = await fetch('/frame.jpg?t=' + Date.now(), {cache:'no-store', signal:abort.signal});
+    if (!response.ok) throw new Error('Camera frame unavailable');
+    const blob = await response.blob();
+    if (!blob.type.startsWith('image/')) throw new Error('Invalid camera frame');
+    candidate = URL.createObjectURL(blob);
+    const next = new Image();
+    next.src = candidate;
+    await next.decode();
+    const previous = previewUrl;
+    previewImage.src = candidate;
+    previewUrl = candidate;
+    document.getElementById('preview-status').textContent = Number(response.headers.get('X-Frame-Age-Ms')) > 1000 ? 'Camera paused — last frame shown' : 'Camera preview live';
+    candidate = null;
+    if (previous) URL.revokeObjectURL(previous);
+  } catch (_) {
+    document.getElementById('preview-status').textContent = previewUrl ? 'Preview retrying — last frame kept' : 'Waiting for camera — retrying';
+  } finally {
+    clearTimeout(timeout);
+    if (candidate) URL.revokeObjectURL(candidate);
+    setTimeout(refreshPreview, 100);
+  }
+}
+refreshPreview();
+
 let enabled = false;
 let selected = null;
 let startedAt = null;
+let commandEpoch = 0;
+let runPending = false;
 
-function say(msg) { document.getElementById('log').textContent = msg; }
+let actionNotice = '';
+function say(msg) {
+  actionNotice = msg;
+  document.getElementById('log').textContent = msg;
+  document.getElementById('drive-notice').textContent = msg;
+}
 
 async function post(url, body) {
   try {
@@ -252,7 +270,8 @@ async function post(url, body) {
       body: JSON.stringify(body || {})
     });
     const j = await r.json();
-    if (j.message) document.getElementById('log').textContent = j.message;
+    if (j.message) say(j.message);
+    return { ...j, success: r.ok && j.ok !== false };
   } catch (e) {
     document.getElementById('log').textContent = 'server not responding';
   }
@@ -269,14 +288,17 @@ function markSelected() {
     b.classList.toggle('sel', parseInt(b.dataset.t, 10) === selected);
   });
 }
-function enable()  { enabled = true;  startedAt = Date.now(); post('/api/enable'); }
+function enable() { post('/api/enable'); }
 function disable() {
+  stopManual();
+  commandEpoch++;
   enabled = false; startedAt = null; selected = null;
   markSelected();
   post('/api/disable');
 }
 function cancelGoal() { selected = null; markSelected(); post('/api/cancel'); }
 
+let zeroPicking = false;
 let drawMode = false;
 let anchored = false;
 let placed = [];
@@ -284,24 +306,71 @@ let cursor = null;
 let tagPix = null;
 let frameSize = null;
 
+let manualToken = null;
+let manualTimer = null;
+let manualPointer = null;
+async function stopManual() {
+  const token = manualToken;
+  manualToken = null;
+  manualPointer = null;
+  clearTimeout(manualTimer);
+  document.querySelectorAll('#manual-pad [data-direction]').forEach(button => button.classList.remove('primary'));
+  if (!token) return;
+  try {
+    await fetch('/api/manual', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({token, direction:'stop', sent_ms:Date.now()}), keepalive:true});
+  } catch (_) {}
+}
+async function pumpManual(token, direction) {
+  if (manualToken !== token) return;
+  const result = await post('/api/manual', {token, direction, sent_ms:Date.now()});
+  if (manualToken !== token) return;
+  if (!result || !result.success) { stopManual(); return; }
+  manualTimer = setTimeout(() => pumpManual(token, direction), 60);
+}
+for (const button of document.querySelectorAll('#manual-pad [data-direction]')) {
+  button.style.touchAction = 'none';
+  button.style.userSelect = 'none';
+  button.addEventListener('pointerdown', event => {
+    event.preventDefault();
+    if (!enabled) { say('Enable first.'); return; }
+    if (manualToken) return;
+    zeroPicking = false;
+    setDrawMode(false);
+    manualToken = crypto.randomUUID();
+    manualPointer = event.pointerId;
+    button.setPointerCapture(event.pointerId);
+    button.classList.add('primary');
+    pumpManual(manualToken, button.dataset.direction);
+  });
+  for (const kind of ['pointerup','pointercancel','lostpointercapture']) {
+    button.addEventListener(kind, event => {
+      if (event.pointerId === manualPointer) stopManual();
+    });
+  }
+  button.addEventListener('contextmenu', event => event.preventDefault());
+}
+window.addEventListener('blur', stopManual);
+window.addEventListener('pagehide', stopManual);
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopManual(); });
+
 const SNAP_PX = 26;
 
+function imageGeometry() {
+  const img=document.getElementById('cam');
+  const rect=img.getBoundingClientRect();
+  const scale=Math.min(rect.width/img.naturalWidth,rect.height/img.naturalHeight);
+  return {rect,scale,x:(rect.width-img.naturalWidth*scale)/2,y:(rect.height-img.naturalHeight*scale)/2};
+}
 function camPoint(e) {
-  const img = document.getElementById('cam');
-  const r = img.getBoundingClientRect();
-  return {
-    x: (e.clientX - r.left) * (img.naturalWidth  / r.width),
-    y: (e.clientY - r.top)  * (img.naturalHeight / r.height)
-  };
+  const g=imageGeometry();
+  return {x:(e.clientX-g.rect.left-g.x)/g.scale,y:(e.clientY-g.rect.top-g.y)/g.scale};
 }
 
 function toScreen(p) {
-  const img = document.getElementById('cam');
-  if (!img.naturalWidth) return {x: 0, y: 0};
-  return {
-    x: p.x * (img.clientWidth  / img.naturalWidth),
-    y: p.y * (img.clientHeight / img.naturalHeight)
-  };
+  const g=imageGeometry();
+  if (!Number.isFinite(g.scale)) return {x:0,y:0};
+  return {x:g.x+p.x*g.scale,y:g.y+p.y*g.scale};
 }
 
 function sizeOverlay() {
@@ -424,6 +493,11 @@ function markCalib() {
 
 document.getElementById('cam').addEventListener('click', (e) => {
   const p = camPoint(e);
+  if (zeroPicking) { finishZero(p); return; }
+  if (drawMode && anchored && placed.length === 1 && tagPix && Math.hypot(p.x-tagPix.x,p.y-tagPix.y) < 26) {
+    say('Tag selected as the start. Now click your destination.');
+    return;
+  }
   if (armedCalib !== null) {
     const i = armedCalib;
     armedCalib = null;
@@ -434,7 +508,7 @@ document.getElementById('cam').addEventListener('click', (e) => {
   if (!drawMode) {
     selected = null;
     markSelected();
-    post('/api/click', p);
+    say('Choose Draw line first; click the tag, then the destination.');
     return;
   }
   if (!anchored) {
@@ -453,7 +527,6 @@ document.getElementById('cam').addEventListener('click', (e) => {
   }
   placed.push(p);
   drawOverlay();
-  sendPath();
 });
 
 document.getElementById('cam').addEventListener('mousemove', (e) => {
@@ -465,7 +538,8 @@ document.getElementById('cam').addEventListener('mousemove', (e) => {
 async function sendPath() {
   if (placed.length < 2) return;
   const pts = placed.slice(1).map(p => ({x: p.x, y: p.y}));
-  await post('/api/path', {points: pts});
+  if (!livePose) { say('Line drawn. Set heading with Zero tag before running it.'); return; }
+  return await post('/api/path', {points: pts});
 }
 
 function setDrawMode(on) {
@@ -474,23 +548,48 @@ function setDrawMode(on) {
   const img = document.getElementById('cam');
   img.style.outline = on ? '2px solid #ffaa3c' : 'none';
   const b = document.getElementById('drawbtn');
-  b.textContent = on ? 'Placing line…' : 'Draw path';
+  b.textContent = on ? 'Drawing line…' : 'Draw line';
   b.classList.toggle('primary', on);
   drawOverlay();
 }
 
 function toggleDraw() {
-  if (!drawMode) { placed = []; anchored = false; }
-  setDrawMode(!drawMode);
+  if (!drawMode) {
+    if (!tagPix) { say('Keep the tag visible to start a line'); return; }
+    zeroPicking = false;
+    placed = [{x: tagPix.x, y: tagPix.y}];
+    anchored = true;
+    cursor = {x: tagPix.x, y: tagPix.y};
+    setDrawMode(true);
+    say('Click destination.');
+  } else setDrawMode(false);
 }
 
-function runPath() {
-  selected = null;
-  markSelected();
-  post('/api/path/run');
+async function runPath() {
+  await stopManual();
+  if (runPending) return;
+  if (!livePose) {
+    await zeroTag();
+    say('RUN BLOCKED: Click in the CAMERA IMAGE ahead of the robot’s physical FRONT to set its heading. Then Enable and Run line.');
+    document.getElementById('cam').scrollIntoView({behavior:'smooth',block:'center'});
+    return;
+  }
+  if (placed.length < 2) { say('Draw a line from the tag first'); return; }
+  const epoch = commandEpoch;
+  runPending = true;
+  try {
+    const result = await sendPath();
+    if (epoch !== commandEpoch || !result || !result.success || !result.count) return;
+    setDrawMode(false);
+    await post('/api/path/run');
+  } finally {
+    runPending = false;
+  }
 }
 
 function clearPath() {
+  stopManual();
+  commandEpoch++;
   placed = [];
   anchored = false;
   cursor = null;
@@ -502,7 +601,7 @@ function undoPoint() {
   if (placed.length > 1) {
     placed.pop();
     drawOverlay();
-    if (placed.length > 1) sendPath(); else post('/api/path/clear');
+    if (placed.length <= 1) post('/api/path/clear');
   }
 }
 
@@ -655,14 +754,15 @@ setTimeout(fitMap, 50);
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   const k = e.key.toLowerCase();
-  if (e.code === 'Space') { e.preventDefault(); enable(); }
+  if (e.repeat || e.target.closest('button, select, textarea')) return;
+  if (e.code === 'Space') { e.preventDefault(); disable(); }
   else if (k === 'd') disable();
   else if (k === 'c') cancelGoal();
   else if (k === 'p') toggleDraw();
   else if (k === 'r') runPath();
-  else if (k === 'z') undoPoint();
+
   else if (e.key === 'Escape') setDrawMode(false);
-  else if (k >= '1' && k <= '6') target(parseInt(k, 10));
+  else if (k === 'z') zeroTag();
 });
 
 function setDot(id, cls, label, text) {
@@ -689,38 +789,111 @@ setInterval(async () => {
     return;
   }
 
-  setDot('d-link', 'ok', 't-link', 'server up');
+  setDot('d-link', s.bluetooth.connected ? 'ok' : 'err', 't-link', s.bluetooth.connected ? 'Bluetooth linked' : 'robot disconnected');
+  document.getElementById('bt-status').textContent = (s.bluetooth.connected ? 'Connected' : 'Disconnected') + (s.bluetooth.battery == null ? '' : ' · ' + s.bluetooth.battery.toFixed(2) + ' V');
+
+  const robot = s.bluetooth.robot || {};
+  if (s.bluetooth.port) document.getElementById('bt-port').value = s.bluetooth.port;
+  const states = ['disabled', 'idle', 'driving', 'aligning', 'climbing', 'holding', 'done'];
+  const commands = ['none', 'destination', 'platform', 'cancel', 'enable', 'disable', 'clear line', 'add point', 'run line', 'manual'];
+  document.getElementById('motor-status').textContent = robot.firmware
+    ? `Robot: ${states[robot.state] || 'unknown'}${robot.turning ? ' / turning' : ''}. Forward ${robot.forward}%, turn ${robot.turn}%. Left ${robot.left_us} µs, right ${robot.right_us} µs. Last command: ${commands[robot.last_cmd] || robot.last_cmd}; ${robot.path_count} points. Pose ${robot.pose_fresh ? 'fresh' : 'missing'}. ${robot.attached === 63 ? 'All drive outputs attached.' : 'Drive output attachment problem.'} Reason: ${robot.reason}.`
+    : 'Upload the motor-feedback firmware to see what the robot is commanding.';
 
   tagPix = s.tag ? {x: s.tag[0], y: s.tag[1]} : null;
   frameSize = s.frame_size || null;
   livePose = s.pose || null;
+  document.getElementById('setup-guide').textContent = zeroPicking
+    ? "CLICK IN THE CAMERA PICTURE just ahead of the robot's FRONT to set its heading."
+    : !s.tag ? 'Put the AprilTag in view so a green outline appears.'
+    : drawMode ? 'Tag selected as the start. Click your destination to draw a line. Set heading with Zero tag before running.'
+    : !s.pose ? 'You can draw a preview now. Before running: Zero tag, then click ahead of the robot’s FRONT.'
+    : 'Heading ready. Press Draw line and click your destination.';
   livePath = s.path || [];
   calib = s.calib || [];
   markCalib();
   drawOverlay();
   drawMap();
 
+  if (s.tag && !s.pose) setDot('d-tag', 'warn', 't-tag', 'tag seen · zero it');
   if (s.pose) {
     setDot('d-tag', 'ok', 't-tag', 'tag locked');
     document.getElementById('px').textContent = s.pose[0].toFixed(0);
     document.getElementById('py').textContent = s.pose[1].toFixed(0);
     document.getElementById('ph').textContent = s.pose[2].toFixed(1) + '°';
   } else {
-    setDot('d-tag', 'err', 't-tag', 'no tag');
+    if (!s.tag) setDot('d-tag', 'err', 't-tag', 'no tag');
     document.getElementById('px').textContent = '—';
     document.getElementById('py').textContent = '—';
     document.getElementById('ph').textContent = '—';
   }
 
-  if (s.calibrated) setDot('d-cal', 'ok', 't-cal', 'calibrated');
-  else setDot('d-cal', 'warn', 't-cal', 'calibrate ' + s.calib_points + '/4');
+  if (s.calibrated) setDot('d-cal', 'ok', 't-cal', 'tag zeroed');
+  else setDot('d-cal', 'warn', 't-cal', 'zero tag first');
   document.getElementById('caln').textContent = s.calib_points + '/4';
 
   enabled = s.enabled;
+  if (!enabled && manualToken) stopManual();
+  document.querySelectorAll('#manual-pad [data-direction]').forEach(button => button.disabled = !enabled);
+  if (s.enabled) startedAt = Date.now() - (90000 - s.remaining_ms);
   if (!s.enabled) startedAt = null;
   setDot('d-en', s.enabled ? 'ok' : 'err', 't-en', s.enabled ? 'ENABLED' : 'disabled');
   document.getElementById('pgoal').textContent =
     s.goal ? (s.goal_label || `${s.goal[0].toFixed(0)},${s.goal[1].toFixed(0)}`) : 'none';
   document.getElementById('pstate').textContent = s.status;
 }, 300);
+
+async function zeroTag(resetFront=false) {
+  await stopManual();
+  commandEpoch++;
+  await post('/api/disable');
+  for (let attempt=0; attempt<10; attempt++) {
+    const state=await (await fetch('/api/state')).json();
+    if (!state.enabled) break;
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  if (!tagPix) { say('Keep the tag visible first'); return; }
+  setDrawMode(false);
+  if (resetFront) {
+    zeroPicking = true;
+    say("Click ahead of the robot's front.");
+    document.getElementById('cam').scrollIntoView({behavior:'smooth',block:'center'});
+    return;
+  }
+  const result = await post('/api/zero', {});
+  if (result && result.success) {
+    zeroPicking = false;
+    placed = []; anchored = false; cursor = null; livePath = [];
+    say('Heading zeroed.');
+  } else {
+    zeroPicking = true;
+    say("Click ahead of the robot's front.");
+  }
+}
+async function finishZero(point) {
+  const result = await post('/api/zero', point);
+  if (result && result.success) {
+    zeroPicking = false;
+    if (placed.length < 2) { placed = []; anchored = false; cursor = null; livePath = []; }
+    setDrawMode(false);
+    say('Heading zeroed to 0°. Draw ahead of the robot, then Enable and Run line.');
+  }
+}
+async function refreshBluetoothPorts() {
+  const ports = await (await fetch('/api/bluetooth/ports')).json();
+  const select = document.getElementById('bt-port');
+  const selected = select.value;
+  select.replaceChildren();
+  for (const p of ports) {
+    const option = document.createElement('option');
+    option.value = p.port; option.textContent = p.port + ' - ' + p.name;
+    select.appendChild(option);
+  }
+  if (ports.some(p => p.port === selected)) select.value = selected;
+}
+async function connectBluetooth() {
+  await post('/api/bluetooth/connect', {port: document.getElementById('bt-port').value});
+}
+refreshBluetoothPorts();
+
 </script>

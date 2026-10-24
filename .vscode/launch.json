@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "MiniBot control page",
+      "name": "MiniBot Bluetooth control page",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/vision/web_ui.py",
@@ -10,21 +10,7 @@
       "cwd": "${workspaceFolder}/vision",
       "args": [],
       "serverReadyAction": {
-        "pattern": "open (https?://\S+)",
-        "uriFormat": "%s",
-        "action": "openExternally"
-      }
-    },
-    {
-      "name": "MiniBot control page (with dongle)",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/vision/web_ui.py",
-      "console": "integratedTerminal",
-      "cwd": "${workspaceFolder}/vision",
-      "args": ["--port", "COM5"],
-      "serverReadyAction": {
-        "pattern": "open (https?://\S+)",
+        "pattern": "open (https?://\\S+)",
         "uriFormat": "%s",
         "action": "openExternally"
       }
@@ -36,7 +22,12 @@
       "program": "${workspaceFolder}/vision/make_tag.py",
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}/vision",
-      "args": ["--id", "0", "--inches", "5"]
+      "args": [
+        "--id",
+        "0",
+        "--inches",
+        "5"
+      ]
     }
   ]
 }

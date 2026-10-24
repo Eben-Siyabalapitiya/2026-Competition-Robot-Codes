@@ -1,4 +1,4 @@
-﻿"""
+"""
 Browser control panel for the MiniBot.
 
 Runs the camera, finds the AprilTag, streams the annotated video to a webpage,
@@ -11,7 +11,7 @@ the browser is doing, so a slow page never slows the robot's control loop. The
 page is a viewer and an input device, nothing more.
 
 Start it:
-    python web_ui.py --port COM5
+    python web_ui.py
 Then open http://localhost:8000
 """
 
@@ -33,6 +33,7 @@ from minibot_vision import (
     CMD_GOTO_TGT,
     CMD_GOTO_XY,
     CMD_NONE,
+    CMD_MANUAL,
     CMD_PATH_ADD,
     CMD_PATH_CLEAR,
     CMD_PATH_RUN,
@@ -44,13 +45,16 @@ from minibot_vision import (
     tag_pose,
 )
 
+from bluetooth_link import BluetoothLink
+
 app = Flask(__name__)
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 CALIB_NAMES = ["Blue A", "Blue B", "Orange B", "Orange A"]
 
 PATH_EPSILON_MM = 55.0
-LINK_HZ = 50
-CMD_REPEATS = 8
+LINK_HZ = 20
+CMD_REPEATS = 1
 
 def thin_path(pts):
     if len(pts) < 3:
@@ -84,7 +88,7 @@ TARGET_POINTS = {
 GOAL_REACHED_MM = 60.0
 
 class Controller:
-    def __init__(self, camera, port, tag_id, family, width, height, exposure=-4, tag_mm=127.0, robot_port=None):
+    def __init__(self, camera, port, tag_id, family, width, height, exposure=-5, tag_mm=127.0, robot_port=None):
         self.camera_index = camera
         self.width = width
         self.height = height
@@ -93,21 +97,25 @@ class Controller:
         self.cap = self.open_camera()
         self.detector = Detector(families=family, nthreads=4, quad_decimate=1.0)
         self.fmap = FieldMap()
-        if robot_port:
-            self.link = Link(robot_port, 115200, "robot (direct usb)")
-        else:
-            self.link = Link(port)
+        self.link = BluetoothLink(port)
         self.tag_id = tag_id
 
         self.lock = threading.Lock()
         self.frame = None
+        self.frame_time = 0.0
         self.pose = None
+        self.pose_time = 0.0
         self.tag_center = None
+        self.tag_heading = None
         self.tag_px = None
         self.enabled = False
         self.status = "not calibrated"
         self.calib_shots = [None] * len(CALIB_POINTS)
 
+        self.manual_token = None
+        self.manual_deadline = 0.0
+        self.manual_values = (0, 0)
+        self.manual_retired = deque(maxlen=128)
         self.pending = deque()
         self.path = []
         self.goal = None
@@ -118,32 +126,59 @@ class Controller:
         threading.Thread(target=self.link_worker, daemon=True).start()
 
     def link_worker(self):
-        """Feed the dongle at a steady rate, independent of the camera.
-
-        The radio drops packets, so rate is what keeps the robot's 500 ms
-        failsafe happy, and commands go out several times to survive the loss.
-        """
+        """Send camera pose and commands over Bluetooth independently of video."""
         while self.running:
+            self.link.poll()
             with self.lock:
-                pose = self.pose
-                item = self.pending.popleft() if self.pending else None
-            cmd, gx, gy, target = item if item else (CMD_NONE, 0, 0, 0)
-            try:
-                self.link.send(pose or (0, 0, 0), pose is not None, cmd, gx, gy, target)
-            except Exception as e:
-                print("link write failed:", e)
+                pose = self.pose if time.monotonic() - self.pose_time < 0.25 else None
+                self.enabled = self.link.enabled
+                item = self.next_command_locked()
+                cmd, gx, gy, target = item if item else (CMD_NONE, 0, 0, 0)
+                try:
+                    self.link.send(pose or (0, 0, 0), pose is not None, cmd, gx, gy, target)
+                except Exception as e:
+                    print("link write failed:", e)
             time.sleep(1.0 / LINK_HZ)
+
+    def retired_manual_locked(self):
+        if not hasattr(self, 'manual_retired'):
+            self.manual_retired = deque(maxlen=128)
+        return self.manual_retired
+
+    def end_manual_locked(self, cancel=True):
+        token = getattr(self, 'manual_token', None)
+        if token:
+            self.retired_manual_locked().append(token)
+            self.manual_token = None
+            if cancel:
+                self.pending.clear()
+                self.pending.appendleft((CMD_CANCEL, 0, 0, 0))
+        return token
+
+    def next_command_locked(self):
+        if getattr(self, 'manual_token', None) and time.monotonic() >= self.manual_deadline:
+            self.end_manual_locked()
+        if self.pending:
+            return self.pending.popleft()
+        if getattr(self, 'manual_token', None):
+            forward, turn = self.manual_values
+            return (CMD_MANUAL, forward, turn, 0)
+        return None
 
     def open_camera(self):
         cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        cap.set(cv2.CAP_PROP_CONVERT_RGB, 1)
+        cap.set(cv2.CAP_PROP_SATURATION, 64)
         if self.exposure is not None:
             cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
             cap.set(cv2.CAP_PROP_EXPOSURE, self.exposure)
         return cap
 
     def worker(self):
+        black_frames = 0
+        last_black_restart = 0.0
         last_send = 0.0
         misses = 0
         while self.running:
@@ -164,6 +199,21 @@ class Controller:
             misses = 0
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            if float(gray.mean()) < 1.0:
+                black_frames += 1
+                with self.lock:
+                    self.pose = None
+                    self.tag_center = None
+                    self.pose_time = 0.0
+                if black_frames >= 10 and time.monotonic() - last_black_restart >= 5.0:
+                    print("USB camera returned black frames; reopening", flush=True)
+                    self.cap.release()
+                    time.sleep(0.3)
+                    self.cap = self.open_camera()
+                    last_black_restart = time.monotonic()
+                    black_frames = 0
+                continue
+            black_frames = 0
             dets = [
                 d for d in self.detector.detect(gray)
                 if self.tag_id is None or d.tag_id == self.tag_id
@@ -171,10 +221,14 @@ class Controller:
 
             pose = None
             centre = None
+            tag_px = None
+            tag_heading = None
             if dets:
                 d = dets[0]
                 centre = (float(d.center[0]), float(d.center[1]))
                 cs = d.corners
+                front = (cs[1] + cs[2]) / 2.0
+                tag_heading = float(np.degrees(np.arctan2(-(front[1] - centre[1]), front[0] - centre[0])))
                 tag_px = sum(
                     float(np.hypot(cs[k][0] - cs[(k + 1) % 4][0], cs[k][1] - cs[(k + 1) % 4][1]))
                     for k in range(4)
@@ -191,15 +245,13 @@ class Controller:
 
             with self.lock:
                 self.pose = pose
+                self.pose_time = time.monotonic()
                 self.tag_center = centre
+                self.tag_heading = tag_heading
                 self.tag_px = tag_px
                 self.frame = frame
-                pending = self.pending.popleft() if self.pending else None
+                self.frame_time = time.monotonic()
 
-            cmd, gx, gy, target = pending if pending else (CMD_NONE, 0, 0, 0)
-
-            if cmd != CMD_NONE:
-                self.pending.appendleft((cmd, gx, gy, target))
 
     def draw_field(self, frame):
         corners = [(0, 0), (FIELD_X_MM, 0), (FIELD_X_MM, FIELD_Y_MM), (0, FIELD_Y_MM)]
@@ -269,20 +321,33 @@ class Controller:
 
     def queue(self, cmd, gx=0, gy=0, target=0):
         with self.lock:
+            self.end_manual_locked()
+            if cmd != CMD_DISABLE and not self.link.connected:
+                self.status = "Connect Bluetooth first"
+                return
             for _ in range(CMD_REPEATS):
                 self.pending.append((cmd, gx, gy, target))
 
     def set_path(self, pts):
         with self.lock:
+            self.end_manual_locked()
             self.path = list(pts)
-        self.queue(CMD_PATH_CLEAR)
-        for i, (px, py) in enumerate(pts):
-            self.queue(CMD_PATH_ADD, gx=px, gy=py, target=i)
+            self.pending = deque(item for item in self.pending
+                                 if item[0] in (CMD_ENABLE, CMD_DISABLE))
+            if self.link.connected:
+                self.pending.append((CMD_CANCEL, 0, 0, 0))
+                self.pending.append((CMD_PATH_CLEAR, 0, 0, 0))
+                self.pending.extend((CMD_PATH_ADD, px, py, i)
+                                    for i, (px, py) in enumerate(pts))
 
     def clear_path(self):
         with self.lock:
+            self.end_manual_locked()
             self.path = []
-        self.queue(CMD_PATH_CLEAR)
+            self.pending = deque(item for item in self.pending
+                                 if item[0] == CMD_DISABLE)
+            self.pending.append((CMD_CANCEL, 0, 0, 0))
+            self.pending.append((CMD_PATH_CLEAR, 0, 0, 0))
 
     def set_calib(self, index, point):
         if not (0 <= index < len(CALIB_POINTS)):
@@ -328,13 +393,50 @@ class Controller:
         self.fmap.H_inv = None
         self.status = "not calibrated"
 
-    def zero_heading(self):
+    def zero_heading(self, front=None):
+        if self.link.enabled:
+            return False, "Stop the robot before zeroing the tag"
         with self.lock:
-            pose = self.pose
-        if not pose:
-            return False, "no tag visible"
-        self.fmap.heading_offset += pose[2]
-        return True, f"heading zeroed, offset {self.fmap.heading_offset:.1f}"
+            centre = self.tag_center
+            px = self.tag_px
+            heading = self.tag_heading
+            fresh = time.monotonic() - self.pose_time < 0.25
+            if centre is None or not px or heading is None or not fresh:
+                return False, "Keep the tag visible, then try Zero tag again"
+            offset = getattr(self, 'front_offset', None)
+            if front and "x" in front and "y" in front:
+                try:
+                    dx = float(front["x"]) - centre[0]
+                    dy = -(float(front["y"]) - centre[1])
+                except (TypeError, ValueError):
+                    return False, "Choose a valid point ahead of the robot's physical front"
+                if not np.isfinite(dx) or not np.isfinite(dy) or np.hypot(dx, dy) < 30:
+                    return False, "Click farther ahead of the robot's physical front"
+                offset = heading - float(np.degrees(np.arctan2(dy, dx)))
+            elif offset is None:
+                return False, "First setup: click ahead of the robot's physical front"
+            scale = self.tag_mm / px
+            angle = np.radians(heading - offset)
+            co, si = np.cos(angle), np.sin(angle)
+            linear = scale * np.array([[co, -si], [-si, -co]])
+            origin = np.array([FIELD_X_MM / 2.0, FIELD_Y_MM / 2.0])
+            translation = origin - linear @ np.array(centre)
+            H = np.eye(3)
+            H[:2, :2] = linear
+            H[:2, 2] = translation
+            self.fmap.H = H
+            self.fmap.H_inv = np.linalg.inv(H)
+            self.fmap.heading_offset = offset
+            self.front_offset = offset
+            self.pose = (FIELD_X_MM / 2.0, FIELD_Y_MM / 2.0, 0.0)
+            self.path = []
+            self.goal = None
+            self.goal_label = ""
+            self.end_manual_locked(cancel=False)
+            self.pending.clear()
+            if self.link.connected:
+                self.pending.append((CMD_PATH_CLEAR, 0, 0, 0))
+        return True, "Heading zeroed to 0 degrees. Draw ahead of the robot to drive forward."
 
     def jpeg(self):
         with self.lock:
@@ -350,6 +452,15 @@ ctl: Controller = None
 def index():
     return render_template("index.html")
 
+@app.route("/frame.jpg")
+def frame_jpeg():
+    buf = ctl.jpeg()
+    if buf is None:
+        return Response(status=503, headers={"Cache-Control": "no-store"})
+    return Response(buf, mimetype="image/jpeg", headers={"Cache-Control": "no-store, max-age=0",
+        "X-Frame-Age-Ms": str(int((time.monotonic() - getattr(ctl, "frame_time", 0.0)) * 1000))})
+
+
 @app.route("/stream")
 def stream():
     def gen():
@@ -360,6 +471,30 @@ def stream():
             time.sleep(0.033)
 
     return Response(gen(), mimetype="multipart/x-mixed-replace; boundary=f")
+
+
+@app.route("/api/bluetooth/ports")
+def bluetooth_ports():
+    from serial.tools import list_ports
+    return jsonify([{"port": p.device, "name": p.description} for p in list_ports.comports()])
+
+@app.route("/api/bluetooth/connect", methods=["POST"])
+def bluetooth_connect():
+    with ctl.lock:
+        ctl.end_manual_locked(cancel=False)
+        ctl.pending.clear()
+        ctl.enabled = False
+        ok, message = ctl.link.connect(str(request.json.get("port", "")))
+    return jsonify({"message": message}), 200 if ok else 400
+
+@app.route("/api/bluetooth/disconnect", methods=["POST"])
+def bluetooth_disconnect():
+    with ctl.lock:
+        ctl.end_manual_locked(cancel=False)
+        ctl.pending.clear()
+        ctl.enabled = False
+        ctl.link.close()
+    return jsonify({"message": "Bluetooth disconnected; robot link-loss stop applies"})
 
 @app.route("/api/state")
 def state():
@@ -377,7 +512,9 @@ def state():
         "pose": list(pose) if pose else None,
         "goal": list(goal) if goal else None,
         "goal_label": goal_label,
-        "enabled": ctl.enabled,
+        "enabled": ctl.link.enabled,
+        "remaining_ms": ctl.link.telemetry.get("remaining_ms", 0),
+        "bluetooth": ctl.link.status(),
         "status": ctl.status,
         "calibrated": ctl.fmap.ready,
         "calib_points": len([p for p in ctl.calib_shots if p is not None]),
@@ -393,23 +530,79 @@ def state():
     })
 
 
+@app.route("/api/manual", methods=["POST"])
+def manual():
+    data = request.get_json(silent=True) or {}
+    token = data.get("token")
+    direction = data.get("direction")
+    if not isinstance(token, str) or not 1 <= len(token) <= 80:
+        return jsonify({"message": "Invalid hold token"}), 400
+    with ctl.lock:
+        retired = ctl.retired_manual_locked()
+        if direction == "stop":
+            if getattr(ctl, 'manual_token', None) == token:
+                ctl.end_manual_locked()
+            elif token not in retired:
+                retired.append(token)
+            return jsonify({"ok": True})
+        directions = {"forward": (22, 0), "backward": (-22, 0), "left": (0, 20), "right": (0, -20)}
+        if direction not in directions:
+            return jsonify({"message": "Invalid direction"}), 400
+        try:
+            age = time.time() * 1000 - float(data.get("sent_ms", 0))
+        except (TypeError, ValueError):
+            age = float('inf')
+        if not np.isfinite(age) or age > 250 or age < -2000 or token in retired:
+            return jsonify({"message": "Hold expired"}), 409
+        if not ctl.link.enabled or ctl.link.telemetry.get('firmware') != 'bt-nav-8-manual':
+            return jsonify({"message": "Enable first"}), 409
+        active = getattr(ctl, 'manual_token', None)
+        if active and time.monotonic() >= ctl.manual_deadline:
+            ctl.end_manual_locked()
+            if token in retired:
+                return jsonify({"message": "Hold expired"}), 409
+            active = None
+        if active and active != token:
+            return jsonify({"message": "Release the other button"}), 409
+        if any(item[0] == CMD_DISABLE for item in ctl.pending):
+            return jsonify({"message": "Robot stopping"}), 409
+        if active is None:
+            ctl.pending.clear()
+            ctl.goal = None
+            ctl.goal_label = ""
+        ctl.manual_token = token
+        ctl.manual_values = directions[direction]
+        ctl.manual_deadline = time.monotonic() + 0.20
+        ctl.status = "Manual"
+        return jsonify({"ok": True})
+
+
 @app.route("/api/enable", methods=["POST"])
 def enable():
-    ctl.enabled = True
-    ctl.status = "ENABLE sent"
+    if not ctl.link.connected:
+        return jsonify({"message": "Connect Bluetooth and wait for robot status first"}), 409
+    if ctl.link.telemetry.get('firmware') != 'bt-nav-8-manual':
+        return jsonify({'message': 'Upload the corrected navigation firmware first'}), 409
+    ctl.status = "Enable requested; waiting for robot"
     ctl.queue(CMD_ENABLE)
-    return jsonify({"message": "enabled"})
+    return jsonify({"message": "Enable requested"})
 
 @app.route("/api/disable", methods=["POST"])
 def disable():
     ctl.enabled = False
     ctl.status = "DISABLE sent"
     ctl.clear_goal()
-    ctl.queue(CMD_DISABLE)
+    with ctl.lock:
+        ctl.end_manual_locked(cancel=False)
+        ctl.pending.clear()
+        ctl.pending.appendleft((CMD_DISABLE, 0, 0, 0))
     return jsonify({"message": "disabled"})
 
 @app.route("/api/cancel", methods=["POST"])
 def cancel():
+    with ctl.lock:
+        ctl.end_manual_locked(cancel=False)
+        ctl.pending.clear()
     ctl.status = "goal cancelled"
     ctl.clear_goal()
     ctl.queue(CMD_CANCEL)
@@ -455,6 +648,11 @@ def path_set():
         if not (0 <= fx <= FIELD_X_MM and 0 <= fy <= FIELD_Y_MM):
             return jsonify({"message": "part of that path is off the field"})
         pts.append((int(round(fx)), int(round(fy))))
+    if len(pts) == 1:
+        with ctl.lock:
+            current_pose = ctl.pose
+        if current_pose and np.hypot(pts[0][0] - current_pose[0], pts[0][1] - current_pose[1]) <= 80:
+            return jsonify({"message": "That point is inside the 8 cm stopping zone. Choose a farther point."}), 409
     pts = thin_path(pts)
     if len(pts) > PATH_MAX:
         return jsonify({"message": f"path too complex, {len(pts)} points but the limit is {PATH_MAX}"})
@@ -467,6 +665,8 @@ def path_run():
     with ctl.lock:
         n = len(ctl.path)
         last = ctl.path[-1] if ctl.path else None
+    if not ctl.link.enabled:
+        return jsonify({"message": "Enable the robot before Run line"}), 409
     if n == 0:
         return jsonify({"message": "no path drawn"})
     ctl.queue(CMD_PATH_RUN)
@@ -511,7 +711,7 @@ def calib_reset():
 
 @app.route("/api/zero", methods=["POST"])
 def zero():
-    ok, msg = ctl.zero_heading()
+    ok, msg = ctl.zero_heading(request.get_json(silent=True))
     ctl.status = msg
     return jsonify({"message": msg, "ok": ok})
 
@@ -519,23 +719,22 @@ def main():
     global ctl
     ap = argparse.ArgumentParser()
     ap.add_argument("--camera", type=int, default=1)
-    ap.add_argument("--port", default="COM6", help="dongle COM port, e.g. COM6")
+    ap.add_argument("--port", default=None, help="paired MiniBot-Control outgoing Bluetooth COM port")
     ap.add_argument("--tag-id", type=int, default=None)
     ap.add_argument("--family", default="tag36h11")
-    ap.add_argument("--robot-port", default=None,
-                    help="talk straight to the robot over usb, skipping the radio")
+
     ap.add_argument("--tag-mm", type=float, default=127.0,
                     help="printed tag size in mm across the black border; 5 in = 127")
-    ap.add_argument("--exposure", type=int, default=-4,
+    ap.add_argument("--exposure", type=int, default=-5,
                     help="manual exposure, less negative is brighter; -1 is brightest")
     ap.add_argument("--width", type=int, default=640)
     ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--http-port", type=int, default=8000)
     args = ap.parse_args()
 
-    ctl = Controller(args.camera, args.port, args.tag_id, args.family, args.width, args.height, args.exposure, args.tag_mm, args.robot_port)
+    ctl = Controller(args.camera, args.port, args.tag_id, args.family, args.width, args.height, args.exposure, args.tag_mm)
     print(f"\n  open http://localhost:{args.http_port}\n")
-    app.run(host="0.0.0.0", port=args.http_port, threaded=True)
+    app.run(host="127.0.0.1", port=args.http_port, threaded=True)
 
 if __name__ == "__main__":
     main()

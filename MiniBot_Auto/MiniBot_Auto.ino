@@ -47,7 +47,18 @@ MotorTypeConfig motorTypeConfigs[] = {
   { SPARK_MAX,   50, 1000, 2000 },
 };
 
-void ConfigureMotorOutput(uint8_t slot, MotorType motorType) {
+int lastMotorPosition[13];
+bool motorPositionWritten[13] = {};
+
+void WriteMotor(uint8_t slot, int position) {
+  position = constrain(position, 0, 180);
+  if (motorPositionWritten[slot] && lastMotorPosition[slot] == position) return;
+  MotorOutput[slot].write(position);
+  lastMotorPosition[slot] = position;
+  motorPositionWritten[slot] = true;
+}
+
+void ConfigureMotorOutput(uint8_t slot, MotorType motorType, int startupPosition = 90) {
   float pwmFreq = 50;
   int minPulseUs = 1000;
   int maxPulseUs = 2000;
@@ -65,7 +76,7 @@ void ConfigureMotorOutput(uint8_t slot, MotorType motorType) {
   pinMode(pin, OUTPUT);
   MotorOutput[slot].setPeriodHertz(pwmFreq);
   MotorOutput[slot].attach(pin, minPulseUs, maxPulseUs);
-  MotorOutput[slot].writeMicroseconds(1500);
+  WriteMotor(slot, startupPosition);
 
   Serial.printf("Motor slot %d on pin %d, type %d\n", slot, pin, motorType);
 }
@@ -111,12 +122,12 @@ void SetDrive(float forward, float turn) {
     SlewMove(currentRightOut, MappedRight);
   }
 
-  MotorOutput[1].write(currentRightOut);
-  MotorOutput[2].write(currentRightOut);
-  MotorOutput[3].write(currentRightOut);
-  MotorOutput[4].write(currentLeftOut);
-  MotorOutput[5].write(currentLeftOut);
-  MotorOutput[6].write(currentLeftOut);
+  WriteMotor(1, currentRightOut);
+  WriteMotor(2, currentRightOut);
+  WriteMotor(3, currentRightOut);
+  WriteMotor(4, currentLeftOut);
+  WriteMotor(5, currentLeftOut);
+  WriteMotor(6, currentLeftOut);
 }
 
 const int TRIM_7  = -7;
@@ -127,17 +138,17 @@ const int ARM_HOME     = 90;
 const int SUPPORT_HOME = 3;
 
 void HomeServos() {
-  MotorOutput[7].write(constrain(ARM_HOME + TRIM_7, 0, 180));
-  MotorOutput[8].write(constrain((180 - ARM_HOME) + TRIM_8, 0, 180));
-  MotorOutput[9].write(constrain((180 - SUPPORT_HOME) + TRIM_9, 0, 180));
-  MotorOutput[10].write(constrain(SUPPORT_HOME + TRIM_10, 0, 180));
+  WriteMotor(7, constrain(ARM_HOME + TRIM_7, 0, 180));
+  WriteMotor(8, constrain((180 - ARM_HOME) + TRIM_8, 0, 180));
+  WriteMotor(9, constrain((180 - SUPPORT_HOME) + TRIM_9, 0, 180));
+  WriteMotor(10, constrain(SUPPORT_HOME + TRIM_10, 0, 180));
 }
 
 void StopAll() {
   currentLeftOut = 90;
   currentRightOut = 90;
-  for (int i = 1; i <= 6; i++) MotorOutput[i].write(90);
-  MotorOutput[12].write(90);
+  for (int i = 1; i <= 6; i++) WriteMotor(i, 90);
+  WriteMotor(12, 90);
   HomeServos();
 }
 
@@ -513,21 +524,12 @@ void HandleCommand(const LinkPacket &p) {
 }
 
 void StatusLeds() {
-  CRGB c;
-  switch (state) {
-    case ST_DISABLED: c = CRGB(255, 0, 0);     break;
-    case ST_IDLE:     c = CRGB(0, 80, 255);    break;
-    case ST_DRIVE:    c = CRGB(0, 255, 0);     break;
-    case ST_ALIGN:    c = CRGB(255, 180, 0);   break;
-    case ST_CLIMB:    c = CRGB(255, 0, 255);   break;
-    case ST_HOLD:     c = CRGB(255, 255, 255); break;
-    case ST_DONE:     c = CRGB(0, 255, 120);   break;
-  }
-  if (batteryWarn) c = CRGB(255, 0, 0);
-  if (!poseFresh && state != ST_DISABLED) {
-    bool on = (millis() / 100) % 2 == 0;
-    if (!on) c = CRGB(0, 0, 0);
-  }
+  CRGB c = state == ST_DISABLED ? CRGB(255, 0, 0) : CRGB(0, 80, 255);
+  static bool shown = false;
+  static CRGB previous;
+  if (shown && c == previous) return;
+  previous = c;
+  shown = true;
   fill_solid(leds, LED_COUNT, c);
   fill_solid(leds2, NUM_LEDS2, c);
   FastLED.show();
@@ -558,10 +560,10 @@ void setup() {
   ConfigureMotorOutput(4, N20Plus);
   ConfigureMotorOutput(5, N20Plus);
   ConfigureMotorOutput(6, N20Plus);
-  ConfigureMotorOutput(7, MG90_Degree);
-  ConfigureMotorOutput(8, MG90_Degree);
-  ConfigureMotorOutput(9, MG90_Degree);
-  ConfigureMotorOutput(10, MG90_Degree);
+  ConfigureMotorOutput(7, MG90_Degree, constrain(ARM_HOME + TRIM_7, 0, 180));
+  ConfigureMotorOutput(8, MG90_Degree, constrain((180 - ARM_HOME) + TRIM_8, 0, 180));
+  ConfigureMotorOutput(9, MG90_Degree, constrain((180 - SUPPORT_HOME) + TRIM_9, 0, 180));
+  ConfigureMotorOutput(10, MG90_Degree, constrain(SUPPORT_HOME + TRIM_10, 0, 180));
   ConfigureMotorOutput(12, N20Plus);
   StopAll();
 
